@@ -346,13 +346,18 @@ std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
+  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    AddImagStiffnessCoefficients(1.0, dfi);
+  }
   AddStiffnessBdrCoefficients(1.0, fb);
   AddRealPeriodicCoefficients(1.0, f);
   AddImagPeriodicCoefficients(1.0, fc);
-  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
+  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (dfi.empty() && fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -366,8 +371,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   }
   if (!empty[1])
   {
-    ki =
-        AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros);
+    ki = AssembleOperator(GetNDSpace(), &dfi, nullptr, nullptr, nullptr, &fc, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -464,11 +468,15 @@ std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+  MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute()), dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
+  AddDispersiveMaterialCoefficients(omega, dfr, dfi, fr, fi);
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+  int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty()),
+                  (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -478,11 +486,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), &dfi, &fi, &dfbi, &fbi, nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -563,6 +571,8 @@ void SpaceOperator::AssemblePreconditioner(
       fpr(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessCoefficients(a0.imag(), dfi, fi);
+  AddImagStiffnessCoefficients(-a0.imag(), dfr);
+  AddImagStiffnessCoefficients(a0.real(), dfi);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddStiffnessBdrCoefficients(a0.imag(), fbi);
   AddDampingCoefficients(a1.real(), fr);
@@ -575,6 +585,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
+  AddDispersiveMaterialCoefficients(a3, dfr, dfi, fr, fi);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
   AddRealPeriodicCoefficients(a0.real(), fr);
   AddRealPeriodicCoefficients(a0.imag(), fi);
@@ -614,6 +625,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1.imag(), fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
+  {
+    MaterialPropertyCoefficient dfi(mat_op.MaxCeedAttribute()),
+        fi(mat_op.MaxCeedAttribute());
+    AddDispersiveMaterialCoefficients(a3, dfr, dfi, fr, fi);
+  }
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0.real(), fr);
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
@@ -641,6 +657,11 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1, fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
+  {
+    MaterialPropertyCoefficient dfi(mat_op.MaxCeedAttribute()),
+        fi(mat_op.MaxCeedAttribute());
+    AddDispersiveMaterialCoefficients(a3, dfr, dfi, fr, fi);
+  }
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0, fr);
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
@@ -743,6 +764,17 @@ void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoeff
   }
 }
 
+void SpaceOperator::AddImagStiffnessCoefficients(double coeff,
+                                                 MaterialPropertyCoefficient &df)
+{
+  // Contribution for complex permeability: μ = μ′ - i μ″.
+  if (mat_op.HasMagneticLoss())
+  {
+    df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeabilityImag(),
+                      coeff);
+  }
+}
+
 void SpaceOperator::AddStiffnessBdrCoefficients(double coeff,
                                                 MaterialPropertyCoefficient &fb)
 {
@@ -808,6 +840,22 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for numeric wave ports.
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+void SpaceOperator::AddDispersiveMaterialCoefficients(
+    double omega, MaterialPropertyCoefficient &dfr, MaterialPropertyCoefficient &dfi,
+    MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi)
+{
+  mfem::DenseTensor muinv_delta, muinv_imag_delta, epsilon_delta, epsilon_imag_delta;
+  if (!mat_op.GetDispersiveMaterialProperties(omega, muinv_delta, muinv_imag_delta,
+                                              epsilon_delta, epsilon_imag_delta))
+  {
+    return;
+  }
+  dfr.AddCoefficient(mat_op.GetAttributeToMaterial(), muinv_delta);
+  dfi.AddCoefficient(mat_op.GetAttributeToMaterial(), muinv_imag_delta);
+  fr.AddCoefficient(mat_op.GetAttributeToMaterial(), epsilon_delta, -omega * omega);
+  fi.AddCoefficient(mat_op.GetAttributeToMaterial(), epsilon_imag_delta, -omega * omega);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

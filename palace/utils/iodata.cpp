@@ -271,6 +271,24 @@ void IoData::CheckConfiguration()
 {
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
+  bool has_pf_material_extension = false;
+  bool has_frequency_dependent_material = false;
+  for (const auto &data : domains.materials)
+  {
+    has_pf_material_extension =
+        has_pf_material_extension || data.has_mu_imag || data.has_magnetic_tandelta ||
+        !data.mu_freq.empty() || !data.epsilon_freq.empty();
+    has_frequency_dependent_material =
+        has_frequency_dependent_material || !data.mu_freq.empty() ||
+        !data.epsilon_freq.empty();
+  }
+  MFEM_VERIFY(!has_pf_material_extension || problem.type == ProblemType::DRIVEN,
+              "Complex permeability and frequency-dependent material tables are supported "
+              "only for Driven frequency-domain simulations!");
+  MFEM_VERIFY(!has_frequency_dependent_material || boundaries.waveport.empty(),
+              "Frequency-dependent material tables are not supported with WavePort "
+              "boundaries; use LumpedPort/Terminal-style driven simulations.");
+
   if (problem.type == ProblemType::DRIVEN)
   {
     // Driven (frequency) solver itself has no unsupported domain or boundary objects.

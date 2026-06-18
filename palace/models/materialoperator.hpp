@@ -28,10 +28,12 @@ private:
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
-  mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
-      mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+  mfem::DenseTensor mat_muinv, mat_muinv_imag, mat_epsilon, mat_epsilon_imag,
+      mat_epsilon_abs, mat_invz0, mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv,
+      mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
+  std::vector<config::MaterialData> mat_data;
 
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
@@ -40,7 +42,8 @@ private:
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // London penetration depth, or Floquet wave vector.
-  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
+  bool has_magnetic_loss_attr, has_losstan_attr, has_conductivity_attr, has_london_attr,
+      has_wave_attr, has_dispersion_attr;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -74,6 +77,7 @@ public:
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
   auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
+  auto GetInvPermeabilityImag(int attr) const { return Wrap(mat_muinv_imag, attr); }
   auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
   auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
@@ -91,6 +95,7 @@ public:
   bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
 
   const auto &GetInvPermeability() const { return mat_muinv; }
+  const auto &GetInvPermeabilityImag() const { return mat_muinv_imag; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
   const auto &GetPermittivityImag() const { return mat_epsilon_imag; }
   const auto &GetPermittivityAbs() const { return mat_epsilon_abs; }
@@ -105,10 +110,17 @@ public:
   const auto &GetLightSpeedMin() const { return mat_c0_min; }
   const auto &GetLightSpeedMax() const { return mat_c0_max; }
 
+  bool HasMagneticLoss() const { return has_magnetic_loss_attr; }
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
+  bool HasFrequencyDependentMaterial() const { return has_dispersion_attr; }
+
+  bool GetDispersiveMaterialProperties(double omega, mfem::DenseTensor &muinv_delta,
+                                       mfem::DenseTensor &muinv_imag_delta,
+                                       mfem::DenseTensor &epsilon_delta,
+                                       mfem::DenseTensor &epsilon_imag_delta) const;
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;

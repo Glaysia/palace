@@ -235,11 +235,35 @@ public:
   }
 };
 
+struct ScalarMaterialPropertyTableData
+{
+public:
+  // Frequencies [GHz in config, nondimensional angular frequency after parsing].
+  std::vector<double> freq = {};
+
+  // Principal scalar values at each frequency sample.
+  std::vector<double> real = {};
+  std::vector<double> imag = {};
+  std::vector<double> loss_tan = {};
+
+  bool has_real = false;
+  bool has_imag = false;
+  bool has_loss_tan = false;
+
+  bool empty() const { return freq.empty(); }
+};
+
 struct MaterialData
 {
 public:
   // Relative permeability.
   SymmetricMatrixData<3> mu_r = 1.0;
+
+  // Positive magnetic loss term μ″ for μ = μ′ - i μ″.
+  SymmetricMatrixData<3> mu_imag = 0.0;
+
+  // Magnetic loss tangent, equivalent to μ″ / μ′.
+  SymmetricMatrixData<3> magnetic_tandelta = 0.0;
 
   // Relative permittivity.
   SymmetricMatrixData<3> epsilon_r = 1.0;
@@ -252,6 +276,13 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Frequency-dependent scalar material tables.
+  ScalarMaterialPropertyTableData mu_freq = {};
+  ScalarMaterialPropertyTableData epsilon_freq = {};
+
+  bool has_mu_imag = false;
+  bool has_magnetic_tandelta = false;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};

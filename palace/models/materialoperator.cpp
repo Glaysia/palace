@@ -3,8 +3,10 @@
 
 #include "materialoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string_view>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -88,6 +90,113 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrix(const std::array<std::array<double, N>, N> &axes,
+                                const std::array<double, N> &values)
+{
+  mfem::DenseMatrix M(N, N);
+  mfem::Vector V(N);
+  M = 0.0;
+  for (std::size_t i = 0; i < N; i++)
+  {
+    for (std::size_t j = 0; j < N; j++)
+    {
+      V(j) = axes[i][j];
+    }
+    AddMult_a_VVt(values[i], V, M);
+  }
+  return M;
+}
+
+config::SymmetricMatrixData<3> MagneticLoss(const config::MaterialData &data)
+{
+  auto mu_loss = data.mu_imag;
+  if (data.has_magnetic_tandelta)
+  {
+    mu_loss.v = data.mu_r.v;
+    for (std::size_t i = 0; i < mu_loss.s.size(); i++)
+    {
+      mu_loss.s[i] = data.mu_r.s[i] * data.magnetic_tandelta.s[i];
+    }
+  }
+  return mu_loss;
+}
+
+void ComplexInvPermeability(const config::MaterialData &data, mfem::DenseMatrix &real_inv,
+                            mfem::DenseMatrix &imag_inv)
+{
+  constexpr std::size_t N = 3;
+  const auto mu_loss = MagneticLoss(data);
+  std::array<double, N> real_values, imag_values;
+  for (std::size_t i = 0; i < N; i++)
+  {
+    MFEM_VERIFY(data.mu_r.s[i] > 0.0,
+                "Material permeability must be positive for complex permeability!");
+    MFEM_VERIFY(mu_loss.s[i] >= 0.0,
+                "Material magnetic loss μ″ must be non-negative!");
+    const double denom = data.mu_r.s[i] * data.mu_r.s[i] + mu_loss.s[i] * mu_loss.s[i];
+    real_values[i] = data.mu_r.s[i] / denom;
+    imag_values[i] = mu_loss.s[i] / denom;
+  }
+  real_inv.Set(1.0, ToDenseMatrix(data.mu_r.v, real_values));
+  imag_inv.Set(1.0, ToDenseMatrix(data.mu_r.v, imag_values));
+}
+
+double Interpolate(const std::vector<double> &x, const std::vector<double> &y, double x0,
+                   std::string_view name)
+{
+  MFEM_VERIFY(!x.empty() && x.size() == y.size(),
+              "Invalid interpolation table for " << name << "!");
+  constexpr double tol = 1.0e-9;
+  if (x.size() == 1)
+  {
+    MFEM_VERIFY(std::abs(x0 - x.front()) <= tol * std::max(1.0, std::abs(x.front())),
+                "Frequency " << x0 << " is outside single-point interpolation table for "
+                              << name << "!");
+    return y.front();
+  }
+  auto upper = std::lower_bound(x.begin(), x.end(), x0);
+  if (upper == x.begin())
+  {
+    MFEM_VERIFY(std::abs(x0 - *upper) <= tol * std::max(1.0, std::abs(*upper)),
+                "Frequency " << x0 << " is below interpolation table range for " << name
+                              << "!");
+    return y.front();
+  }
+  if (upper == x.end())
+  {
+    MFEM_VERIFY(std::abs(x0 - x.back()) <= tol * std::max(1.0, std::abs(x.back())),
+                "Frequency " << x0 << " is above interpolation table range for " << name
+                              << "!");
+    return y.back();
+  }
+  const std::size_t hi = std::distance(x.begin(), upper);
+  const std::size_t lo = hi - 1;
+  const double t = (x0 - x[lo]) / (x[hi] - x[lo]);
+  return (1.0 - t) * y[lo] + t * y[hi];
+}
+
+std::pair<double, double> EvaluateComplexScalar(
+    const config::ScalarMaterialPropertyTableData &table, double omega,
+    std::string_view name)
+{
+  const double real = Interpolate(table.freq, table.real, omega, name);
+  double imag = 0.0;
+  if (table.has_imag)
+  {
+    imag = Interpolate(table.freq, table.imag, omega, name);
+  }
+  else if (table.has_loss_tan)
+  {
+    imag = real * Interpolate(table.freq, table.loss_tan, omega, name);
+  }
+  MFEM_VERIFY(real > 0.0, "Frequency-dependent real material property must be positive for "
+                              << name << "!");
+  MFEM_VERIFY(imag >= 0.0, "Frequency-dependent loss term must be non-negative for "
+                               << name << "!");
+  return {real, imag};
+}
+
 }  // namespace internal::mat
 
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
@@ -158,9 +267,12 @@ void MaterialOperator::SetUpMaterialProperties(
   attr_mat = -1;
 
   attr_is_isotropic.SetSize(nmats);
+  mat_data.clear();
+  mat_data.reserve(nmats);
 
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
+  mat_muinv_imag.SetSize(sdim, sdim, nmats);
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
   mat_epsilon_abs.SetSize(sdim, sdim, nmats);
@@ -173,7 +285,8 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_muinvkx.SetSize(sdim, sdim, nmats);
   mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
   mat_kx.SetSize(sdim, sdim, nmats);
-  has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
+  has_magnetic_loss_attr = has_losstan_attr = has_conductivity_attr = has_london_attr =
+      has_wave_attr = has_dispersion_attr = false;
 
   // Set up Floquet wave vector for periodic meshes with phase-delay constraints.
   SetUpFloquetWaveVector(periodic, problem_type, mesh);
@@ -218,6 +331,8 @@ void MaterialOperator::SetUpMaterialProperties(
                   "Material has no valid permeability or no valid permittivity defined!");
       if (problem_type == ProblemType::TRANSIENT)
       {
+        MFEM_VERIFY(!data.has_mu_imag && !data.has_magnetic_tandelta,
+                    "Transient problem type does not support complex permeability!");
         MFEM_VERIFY(!internal::mat::IsValid(data.tandelta),
                     "Transient problem type does not support material loss tangent, use "
                     "electrical conductivity instead!");
@@ -232,6 +347,8 @@ void MaterialOperator::SetUpMaterialProperties(
     }
 
     attr_is_isotropic[count] = internal::mat::IsIsotropic(data.mu_r) &&
+                               internal::mat::IsIsotropic(data.mu_imag) &&
+                               internal::mat::IsIsotropic(data.magnetic_tandelta) &&
                                internal::mat::IsIsotropic(data.epsilon_r) &&
                                internal::mat::IsIsotropic(data.tandelta) &&
                                internal::mat::IsIsotropic(data.sigma);
@@ -250,9 +367,15 @@ void MaterialOperator::SetUpMaterialProperties(
       }
     }
 
-    // Compute the inverse of the input permeability matrix.
+    mat_data.push_back(data);
+
+    // Compute the inverse of the input complex permeability matrix.
     mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrix(data.mu_r);
-    mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
+    internal::mat::ComplexInvPermeability(data, mat_muinv(count), mat_muinv_imag(count));
+    if (mat_muinv_imag(count).MaxMaxNorm() > 0.0)
+    {
+      has_magnetic_loss_attr = true;
+    }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
@@ -299,6 +422,11 @@ void MaterialOperator::SetUpMaterialProperties(
       has_london_attr = true;
     }
 
+    if (!data.mu_freq.empty() || !data.epsilon_freq.empty())
+    {
+      has_dispersion_attr = true;
+    }
+
     // μ⁻¹ [k x]
     Mult(mat_muinv(count), wave_vector_cross, mat_muinvkx(count));
 
@@ -311,13 +439,82 @@ void MaterialOperator::SetUpMaterialProperties(
 
     count++;
   }
-  bool has_attr[4] = {has_losstan_attr, has_conductivity_attr, has_london_attr,
-                      has_wave_attr};
-  Mpi::GlobalOr(4, has_attr, mesh.GetComm());
-  has_losstan_attr = has_attr[0];
-  has_conductivity_attr = has_attr[1];
-  has_london_attr = has_attr[2];
-  has_wave_attr = has_attr[3];
+  bool has_attr[6] = {has_magnetic_loss_attr, has_losstan_attr, has_conductivity_attr,
+                      has_london_attr, has_wave_attr,   has_dispersion_attr};
+  Mpi::GlobalOr(6, has_attr, mesh.GetComm());
+  has_magnetic_loss_attr = has_attr[0];
+  has_losstan_attr = has_attr[1];
+  has_conductivity_attr = has_attr[2];
+  has_london_attr = has_attr[3];
+  has_wave_attr = has_attr[4];
+  has_dispersion_attr = has_attr[5];
+}
+
+bool MaterialOperator::GetDispersiveMaterialProperties(
+    double omega, mfem::DenseTensor &muinv_delta, mfem::DenseTensor &muinv_imag_delta,
+    mfem::DenseTensor &epsilon_delta, mfem::DenseTensor &epsilon_imag_delta) const
+{
+  if (!has_dispersion_attr)
+  {
+    return false;
+  }
+  const int sdim = mesh.SpaceDimension();
+  const int nmats = static_cast<int>(mat_data.size());
+  muinv_delta.SetSize(sdim, sdim, nmats);
+  muinv_imag_delta.SetSize(sdim, sdim, nmats);
+  epsilon_delta.SetSize(sdim, sdim, nmats);
+  epsilon_imag_delta.SetSize(sdim, sdim, nmats);
+  muinv_delta = 0.0;
+  muinv_imag_delta = 0.0;
+  epsilon_delta = 0.0;
+  epsilon_imag_delta = 0.0;
+
+  bool nonzero = false;
+  for (int k = 0; k < nmats; k++)
+  {
+    const auto &data = mat_data[k];
+    if (!data.mu_freq.empty())
+    {
+      const auto [mu_real, mu_imag] =
+          internal::mat::EvaluateComplexScalar(data.mu_freq, omega, "PermeabilityFreq");
+      auto eval = data;
+      eval.has_mu_imag = true;
+      eval.has_magnetic_tandelta = false;
+      eval.mu_r.s.fill(mu_real);
+      eval.mu_imag.s.fill(mu_imag);
+      eval.mu_imag.v = eval.mu_r.v;
+
+      mfem::DenseMatrix muinv_real(sdim), muinv_imag_eval(sdim);
+      internal::mat::ComplexInvPermeability(eval, muinv_real, muinv_imag_eval);
+      muinv_real.Add(-1.0, mat_muinv(k));
+      muinv_imag_eval.Add(-1.0, mat_muinv_imag(k));
+      muinv_delta(k).Set(1.0, muinv_real);
+      muinv_imag_delta(k).Set(1.0, muinv_imag_eval);
+      nonzero = nonzero || muinv_real.MaxMaxNorm() > 0.0 ||
+                muinv_imag_eval.MaxMaxNorm() > 0.0;
+    }
+    if (!data.epsilon_freq.empty())
+    {
+      const auto [epsilon_real, epsilon_imag] =
+          internal::mat::EvaluateComplexScalar(data.epsilon_freq, omega,
+                                               "PermittivityFreq");
+      std::array<double, 3> epsilon_real_values, epsilon_imag_values;
+      epsilon_real_values.fill(epsilon_real);
+      epsilon_imag_values.fill(-epsilon_imag);
+
+      mfem::DenseMatrix epsilon_real_matrix =
+          internal::mat::ToDenseMatrix(data.epsilon_r.v, epsilon_real_values);
+      mfem::DenseMatrix epsilon_imag_matrix =
+          internal::mat::ToDenseMatrix(data.epsilon_r.v, epsilon_imag_values);
+      epsilon_real_matrix.Add(-1.0, mat_epsilon(k));
+      epsilon_imag_matrix.Add(-1.0, mat_epsilon_imag(k));
+      epsilon_delta(k).Set(1.0, epsilon_real_matrix);
+      epsilon_imag_delta(k).Set(1.0, epsilon_imag_matrix);
+      nonzero = nonzero || epsilon_real_matrix.MaxMaxNorm() > 0.0 ||
+                epsilon_imag_matrix.MaxMaxNorm() > 0.0;
+    }
+  }
+  return nonzero;
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,

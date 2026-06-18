@@ -85,6 +85,7 @@ private:
   // operators in Maxwell's equations.
   void AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                 MaterialPropertyCoefficient &f);
+  void AddImagStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df);
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
@@ -96,6 +97,10 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+  void AddDispersiveMaterialCoefficients(double omega, MaterialPropertyCoefficient &dfr,
+                                         MaterialPropertyCoefficient &dfi,
+                                         MaterialPropertyCoefficient &fr,
+                                         MaterialPropertyCoefficient &fi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 

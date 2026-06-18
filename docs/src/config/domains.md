@@ -54,7 +54,21 @@ location in space.
     {
         "Attributes": [<int array>],
         "Permeability": <float> or [<float array>],
+        "PermeabilityImag": <float> or [<float array>],
+        "MagneticLossTan": <float> or [<float array>],
+        "PermeabilityFreq": {
+            "Freq": [<float array>],
+            "Real": [<float array>],
+            "Imag": [<float array>],
+            "LossTan": [<float array>]
+        },
         "Permittivity": <float> or [<float array>],
+        "PermittivityFreq": {
+            "Freq": [<float array>],
+            "Real": [<float array>],
+            "Imag": [<float array>],
+            "LossTan": [<float array>]
+        },
         "LossTan": <float> or [<float array>],
         "Conductivity": <float> or [<float array>],
         "LondonDepth": <float>,
@@ -72,8 +86,28 @@ with
 `"Permeability" [1.0]` :  Relative permeability for this material. Scalar or vector of 3
 coefficients corresponding to each of `"MaterialAxes"`.
 
+`"PermeabilityImag" [0.0]` :  Positive magnetic loss component μ″ for complex relative
+permeability μ = μ′ - i μ″. Scalar or vector of 3 coefficients corresponding to each of
+`"MaterialAxes"`. Specify only one of `"PermeabilityImag"` or `"MagneticLossTan"`.
+
+`"MagneticLossTan" [0.0]` :  Magnetic loss tangent tanδₘ = μ″ / μ′. Scalar or vector of 3
+coefficients corresponding to each of `"MaterialAxes"`. Specify only one of
+`"MagneticLossTan"` or `"PermeabilityImag"`.
+
+`"PermeabilityFreq" [None]` :  Frequency-dependent scalar relative permeability table for
+Driven simulations. `"Freq"` is in GHz and must be strictly increasing. `"Real"` gives μ′.
+Use exactly one of `"Imag"` for positive μ″ in μ = μ′ - i μ″ or `"LossTan"` for tanδₘ.
+Values are linearly interpolated and solving outside the table range is an error. Frequency-
+dependent material tables are not supported together with `"WavePort"` boundaries.
+
 `"Permittivity" [1.0]` : Relative permittivity for this material. Scalar or vector of 3
 coefficients corresponding to each of `"MaterialAxes"`.
+
+`"PermittivityFreq" [None]` :  Frequency-dependent scalar relative permittivity table for
+Driven simulations. `"Freq"` is in GHz and must be strictly increasing. `"Real"` gives ε′.
+Use exactly one of `"Imag"` for positive ε″ in ε = ε′ - i ε″ or `"LossTan"` for tanδ.
+Values are linearly interpolated and solving outside the table range is an error. Frequency-
+dependent material tables are not supported together with `"WavePort"` boundaries.
 
 `"LossTan" [0.0]` :  Loss tangent for this material. Scalar or vector of 3 coefficients
 corresponding to each of `"MaterialAxes"`.

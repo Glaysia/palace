@@ -201,6 +201,63 @@ void ParseSymmetricMatrixData(const json &mat, const std::string &name,
   data.v = mat.value("MaterialAxes", data.v);
 }
 
+void ParseScalarMaterialPropertyTableData(const json &mat, const std::string &table_name,
+                                          ScalarMaterialPropertyTableData &data)
+{
+  auto it = mat.find(table_name);
+  if (it == mat.end())
+  {
+    return;
+  }
+  const auto &table = *it;
+  data.freq = table.at("Freq").get<std::vector<double>>();
+  if (auto real = table.find("Real"); real != table.end())
+  {
+    data.real = real->get<std::vector<double>>();
+    data.has_real = true;
+  }
+  if (auto imag = table.find("Imag"); imag != table.end())
+  {
+    data.imag = imag->get<std::vector<double>>();
+    data.has_imag = true;
+  }
+  if (auto loss_tan = table.find("LossTan"); loss_tan != table.end())
+  {
+    data.loss_tan = loss_tan->get<std::vector<double>>();
+    data.has_loss_tan = true;
+  }
+
+  MFEM_VERIFY(!data.freq.empty(), "\"" << table_name << "\" requires non-empty \"Freq\"!");
+  MFEM_VERIFY(data.has_real, "\"" << table_name << "\" requires \"Real\"!");
+  MFEM_VERIFY(!(data.has_imag && data.has_loss_tan),
+              "\"" << table_name << "\" accepts only one of \"Imag\" or \"LossTan\"!");
+  auto CheckSize = [&](const std::string &name, const std::vector<double> &values)
+  {
+    MFEM_VERIFY(values.size() == data.freq.size(),
+                "\"" << table_name << "\" field \"" << name
+                    << "\" must have the same length as \"Freq\"!");
+  };
+  CheckSize("Real", data.real);
+  if (data.has_imag)
+  {
+    CheckSize("Imag", data.imag);
+  }
+  if (data.has_loss_tan)
+  {
+    CheckSize("LossTan", data.loss_tan);
+  }
+  for (std::size_t i = 0; i < data.freq.size(); i++)
+  {
+    MFEM_VERIFY(data.freq[i] > 0.0,
+                "\"" << table_name << "\" frequencies must be positive!");
+    if (i > 0)
+    {
+      MFEM_VERIFY(data.freq[i] > data.freq[i - 1],
+                  "\"" << table_name << "\" frequencies must be strictly increasing!");
+    }
+  }
+}
+
 // Helper function for extracting element data from the configuration file, either from a
 // provided keyword argument of from a specified vector. In extracting the direction various
 // checks are performed for validity of the input combinations.
@@ -381,10 +438,19 @@ MaterialData::MaterialData(const json &domain)
 {
   attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
+  has_mu_imag = domain.find("PermeabilityImag") != domain.end();
+  has_magnetic_tandelta = domain.find("MagneticLossTan") != domain.end();
+  MFEM_VERIFY(!(has_mu_imag && has_magnetic_tandelta),
+              "Material accepts only one of \"PermeabilityImag\" or "
+              "\"MagneticLossTan\"!");
   ParseSymmetricMatrixData(domain, "Permeability", mu_r);
+  ParseSymmetricMatrixData(domain, "PermeabilityImag", mu_imag);
+  ParseSymmetricMatrixData(domain, "MagneticLossTan", magnetic_tandelta);
   ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  ParseScalarMaterialPropertyTableData(domain, "PermeabilityFreq", mu_freq);
+  ParseScalarMaterialPropertyTableData(domain, "PermittivityFreq", epsilon_freq);
   lambda_L = domain.value("LondonDepth", lambda_L);
 }
 
@@ -1449,6 +1515,14 @@ void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+  for (auto &f : data.mu_freq.freq)
+  {
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
+  for (auto &f : data.epsilon_freq.freq)
+  {
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

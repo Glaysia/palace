@@ -31,6 +31,32 @@
               }
             ]
           },
+          "PermeabilityImag":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
+          "MagneticLossTan":
+          {
+            "oneOf" :
+            [
+              {"type": "number" },
+              {
+                "type": "array",
+                "items" : { "type" :"number" },
+                "minItems" : 3,
+                "maxItems" : 3
+              }
+            ]
+          },
           "Permittivity":
           {
             "oneOf" :
@@ -70,6 +96,8 @@
               }
             ]
           },
+          "PermeabilityFreq": { "$ref": "#/$defs/ScalarMaterialTable" },
+          "PermittivityFreq": { "$ref": "#/$defs/ScalarMaterialTable" },
           "LondonDepth": { "type": "number" },
           "MaterialAxes":
           {
@@ -186,6 +214,39 @@
       "additionalItems": false,
       "items": { "type": "integer"},
       "minItems": 1
+    },
+    "ScalarMaterialTable":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Freq", "Real"],
+      "properties":
+      {
+        "Freq":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1
+        },
+        "Real":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1
+        },
+        "Imag":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1
+        },
+        "LossTan":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1
+        }
+      }
     }
   }
 }
