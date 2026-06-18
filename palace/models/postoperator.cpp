@@ -904,6 +904,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       auto &vi = measurement_cache.lumped_port_vi[idx];
       vi.P = data.GetPower(*E, *B);
       vi.V = data.GetVoltage(*E);
+      vi.I_field = (std::abs(vi.V) > 0.0) ? std::conj(vi.P / vi.V) : 0.0;
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
@@ -1111,7 +1112,8 @@ void PostOperator<solver_t>::MeasureSurfaceFlux() const
   for (const auto &[idx, data] : surf_post_op.flux_surfs)
   {
     measurement_cache.surface_flux_i.emplace_back(Measurement::FluxData{
-        idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get()), data.type});
+        idx, surf_post_op.GetSurfaceFlux(idx, E.get(), B.get(), measurement_cache.freq.real()),
+        data.type});
   }
 }
 

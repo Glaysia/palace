@@ -29,6 +29,9 @@ struct SurfaceCurrentData;
 class SurfaceCurrentData
 {
 public:
+  int excitation;
+  double current;
+
   // To accommodate multielement surface current sources, a current source may be made up
   // of elements with different attributes and directions which add to deliver the same
   // total source current.
@@ -37,6 +40,7 @@ public:
 public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);
 
+  constexpr bool HasExcitation() const { return excitation != 0; }
   double GetExcitationCurrent() const;
 };
 
@@ -75,6 +79,8 @@ public:
   // full -iω J_inc for the complex one).
   void AddExcitationBdrCoefficients(SumVectorCoefficient &fb);
   void AddExcitationBdrCoefficients(int idx, SumVectorCoefficient &fb);
+  void AddExcitationBdrCoefficientsForExcitation(int excitation_idx,
+                                                 SumVectorCoefficient &fb);
   void AddExcitationBdrCoefficients(const SurfaceCurrentData &data,
                                     SumVectorCoefficient &fb);
 };

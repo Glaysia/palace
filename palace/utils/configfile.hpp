@@ -554,6 +554,13 @@ public:
 struct SurfaceCurrentData
 {
 public:
+  // Input excitation for driven & transient solver:
+  // - 1-based index if excited with a specific excitation; 0 means always excited.
+  int excitation = 0;
+
+  // Source current amplitude for the surface current boundary.
+  double current = 1.0;
+
   // For each surface current source index, each element contains a list of attributes
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};

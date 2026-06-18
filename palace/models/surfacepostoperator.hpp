@@ -52,9 +52,10 @@ private:
     SurfaceFluxData(const config::SurfaceFluxData &data, const mfem::ParMesh &mesh,
                     const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const mfem::ParGridFunction *E,
-                                                      const mfem::ParGridFunction *B,
-                                                      const MaterialOperator &mat_op) const;
+    std::unique_ptr<mfem::Coefficient>
+    GetCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+                   const MaterialOperator &mat_op, double omega = 0.0,
+                   bool current_displacement = false) const;
   };
   struct InterfaceDielectricData : public SurfaceData
   {
@@ -109,7 +110,7 @@ public:
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,
-                                      const GridFunction *B) const;
+                                      const GridFunction *B, double omega = 0.0) const;
 
   // Batch version for multiple theta/phi pairs
   std::vector<std::array<std::complex<double>, 3>>

@@ -44,7 +44,8 @@ enum class SurfaceFlux : char
 {
   ELECTRIC,
   MAGNETIC,
-  POWER
+  POWER,
+  CURRENT
 };
 
 // Interface dielectrics for computing electric field energy participation ratios.

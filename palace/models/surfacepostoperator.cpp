@@ -77,6 +77,9 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
     case SurfaceFlux::POWER:
       type = SurfaceFlux::POWER;
       break;
+    case SurfaceFlux::CURRENT:
+      type = SurfaceFlux::CURRENT;
+      break;
   }
 
   // Store information about the global direction for orientation. Note the true boundary
@@ -104,10 +107,9 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
   }
 }
 
-std::unique_ptr<mfem::Coefficient>
-SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction *E,
-                                                     const mfem::ParGridFunction *B,
-                                                     const MaterialOperator &mat_op) const
+std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
+    const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
+    const MaterialOperator &mat_op, double omega, bool current_displacement) const
 {
   switch (type)
   {
@@ -123,6 +125,11 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>>(
           attr_list, E, B, mat_op, two_sided, center);
+    case SurfaceFlux::CURRENT:
+      return std::make_unique<
+          RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::CURRENT>>>(
+          attr_list, E, nullptr, mat_op, two_sided, center, 1.0, omega,
+          current_displacement);
   }
   return {};
 }
@@ -288,7 +295,8 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
-                                                         const GridFunction *B) const
+                                                         const GridFunction *B,
+                                                         double omega) const
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
@@ -300,6 +308,31 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+  if (it->second.type == SurfaceFlux::CURRENT)
+  {
+    MFEM_VERIFY(E, "Current surface flux postprocessing requires an electric field!");
+    MFEM_VERIFY(omega > 0.0,
+                "Current surface flux postprocessing requires nonzero angular frequency!");
+    auto current_flux = [&](const mfem::ParGridFunction &field,
+                            bool current_displacement)
+    {
+      auto f =
+          it->second.GetCoefficient(&field, nullptr, mat_op, omega, current_displacement);
+      return GetLocalSurfaceIntegral(*f, attr_marker);
+    };
+    const double sigma_er = current_flux(E->Real(), false);
+    const double eps_er = current_flux(E->Real(), true);
+    std::complex<double> dot(sigma_er, omega * eps_er);
+    if (has_imag)
+    {
+      const double sigma_ei = current_flux(E->Imag(), false);
+      const double eps_ei = current_flux(E->Imag(), true);
+      dot.real(sigma_er - omega * eps_ei);
+      dot.imag(sigma_ei + omega * eps_er);
+    }
+    Mpi::GlobalSum(1, &dot, E->GetComm());
+    return dot;
+  }
   auto f =
       it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
   std::complex<double> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);

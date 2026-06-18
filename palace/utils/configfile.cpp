@@ -84,7 +84,8 @@ PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID,
 // Helper for converting string keys to enum for SurfaceFlux.
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                          {SurfaceFlux::MAGNETIC, "Magnetic"},
-                                         {SurfaceFlux::POWER, "Power"}})
+                                         {SurfaceFlux::POWER, "Power"},
+                                         {SurfaceFlux::CURRENT, "Current"}})
 
 // Helper for converting string keys to enum for InterfaceDielectric.
 PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric, {{InterfaceDielectric::DEFAULT, "Default"},
@@ -686,6 +687,10 @@ WavePortData::WavePortData(const json &port)
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
+  int index = source.at("Index");  // Required
+  excitation = ParsePortExcitation(source, index);
+  current = source.value("Current", current);
+  MFEM_VERIFY(current != 0.0, "\"SurfaceCurrent\" \"Current\" must be nonzero!");
   if (source.find("Attributes") != source.end())
   {
     auto &elem = elements.emplace_back();
@@ -1398,7 +1403,9 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
-  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent, Terminal.
+  // Check for duplicate indices across terminal-style boundary definitions. SurfaceCurrent
+  // is allowed to share an index with a LumpedPort when the latter is used only for
+  // terminal-voltage measurement.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1415,15 +1422,6 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     if (!inserted)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and WavePort\n";
-    }
-  }
-  for (const auto &[idx, data] : boundaries.current)
-  {
-    auto [it, inserted] = index_map.try_emplace(idx, "SurfaceCurrent");
-    if (!inserted)
-    {
-      errors << "Duplicate \"Index\": " << idx << " in " << it->second
-             << " and SurfaceCurrent\n";
     }
   }
   for (const auto &[idx, data] : boundaries.terminal)

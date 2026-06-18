@@ -40,10 +40,11 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   if (std::none_of(deviations_deg.begin(), deviations_deg.end(),
                    [](double x) { return x < angle_error_deg; }))
   {
-    Mpi::Barrier(mesh.GetComm());
-    MFEM_ABORT("Specified direction does not align sufficiently with bounding box axes ("
-               << deviations_deg[0] << ", " << deviations_deg[1] << ", "
-               << deviations_deg[2] << " vs. tolerance " << angle_error_deg << ")!");
+    Mpi::Warning("Specified direction does not align sufficiently with bounding box axes "
+                 "({:.16e}, {:.16e}, {:.16e} vs. tolerance {:.16e}); continuing with "
+                 "direction-projected length for non-rectangular boundary patch!\n",
+                 deviations_deg[0], deviations_deg[1], deviations_deg[2],
+                 angle_error_deg);
   }
   direction.SetSize(input_dir.size());
   std::copy(input_dir.begin(), input_dir.end(), direction.begin());
@@ -55,11 +56,16 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
       std::distance(deviations_deg.begin(),
                     std::min_element(deviations_deg.begin(), deviations_deg.end()));
   l = lengths[l_component];
-  MFEM_VERIFY(std::abs(l - mesh::GetProjectedLength(mesh, attr_marker, true, input_dir)) <
-                  rel_tol * l,
-              "Bounding box discovered length ("
-                  << l << ") should match projected length ("
-                  << mesh::GetProjectedLength(mesh, attr_marker, true, input_dir) << "!");
+  const double projected_l = mesh::GetProjectedLength(mesh, attr_marker, true, input_dir);
+  MFEM_VERIFY(projected_l > 0.0, "Uniform lumped element projected length is zero!");
+  if (std::abs(l - projected_l) >= rel_tol * l)
+  {
+    Mpi::Warning(
+        "Bounding box discovered length ({:.16e}) differs from projected length "
+        "({:.16e}); using projected length for non-rectangular boundary patch!\n",
+        l, projected_l);
+    l = projected_l;
+  }
 
   // Compute the width as area / length. This allows the lumped element to be non-planar,
   // and generalizes nicely to the case for an infinitely thin rectangular lumped element

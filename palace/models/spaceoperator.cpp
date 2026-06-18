@@ -1011,7 +1011,7 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   // Boundary sources
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
-  surf_j_op.AddExcitationBdrCoefficients(fb);  // No excitation_idx — currently in all
+  surf_j_op.AddExcitationBdrCoefficientsForExcitation(excitation_idx, fb);
 
   // Domain sources (current dipoles) - use integrator-based approach
   bool has_current_dipoles = !current_dipole_op.Empty();

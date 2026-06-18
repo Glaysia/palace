@@ -114,7 +114,7 @@ when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
-This boundary prescribes a unit source surface current excitation on the given boundary in
+This boundary prescribes a source surface current excitation on the given boundary in
 order to excite a frequency or time domain driven simulation or magnetostatic simulation.
 For the magnetostatic simulation type, entries of the inductance matrix are extracted
 corresponding to each surface current boundary.
@@ -462,6 +462,9 @@ direction for this surface current boundary. The available options are the same 
 [`config["Boundaries"]["LumpedPort"]["CoordinateSystem"]`](#boundaries%5B%22LumpedPort%22%5D).
 If this source is to be a multielement source which distributes the source across more than
 a single lumped element, use the `"Elements"` array described below.
+
+`"Current" [1.0]` :  Source current amplitude for this surface current boundary. For
+multielement sources, this total current is distributed across the elements in parallel.
 
 `"Elements"[]["Attributes"] [None]` :  This option is for multielement surface current
 boundaries should not be combined with the `"Attributes"` field described above. Each

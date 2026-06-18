@@ -102,6 +102,7 @@ struct Measurement
     std::complex<double> P = 0.0;
     std::complex<double> V = 0.0;
     std::complex<double> I = 0.0;
+    std::complex<double> I_field = 0.0;
     // Separate R, L, and C branches for current via Z.
     std::array<std::complex<double>, 3> I_RLC = {0.0, 0.0, 0.0};
 
@@ -259,6 +260,7 @@ protected:
   // Eigenmode + Driven + Transient.
   std::optional<TableWithCSVFile> port_V;
   std::optional<TableWithCSVFile> port_I;
+  std::optional<TableWithCSVFile> port_I_field;
   template <ProblemType U = solver_t>
   auto InitializePortVI(const SpaceOperator &fem_op)
       -> std::enable_if_t<U == ProblemType::EIGENMODE || U == ProblemType::DRIVEN ||

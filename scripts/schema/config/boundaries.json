@@ -189,6 +189,13 @@
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+          "Current": { "type": "number" },
+          "Excitation": {
+            "oneOf" : [
+              { "type": "boolean" },
+              { "type": "integer", "minimum": 0 }
+            ]
+          },
           "Elements":
           {
             "type": "array",
@@ -293,7 +300,7 @@
             {
               "Index": { "type": "integer", "exclusiveMinimum": 0 },
               "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power"] },
+              "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power", "Current"] },
               "TwoSided": { "type": "boolean" },
               "Center":
               {

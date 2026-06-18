@@ -13,6 +13,7 @@ namespace palace
 
 SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
                                        const mfem::ParMesh &mesh)
+  : excitation(data.excitation), current(data.current)
 {
   // Construct the source elements allowing for a possible multielement surface current
   // sources.
@@ -36,8 +37,7 @@ SurfaceCurrentData::SurfaceCurrentData(const config::SurfaceCurrentData &data,
 
 double SurfaceCurrentData::GetExcitationCurrent() const
 {
-  // Ideal unit current source for each index.
-  return 1.0;
+  return current;
 }
 
 SurfaceCurrentOperator::SurfaceCurrentOperator(const IoData &iodata,
@@ -154,14 +154,28 @@ void SurfaceCurrentOperator::AddExcitationBdrCoefficients(int idx, SumVectorCoef
   AddExcitationBdrCoefficients(GetSource(idx), fb);
 }
 
+void SurfaceCurrentOperator::AddExcitationBdrCoefficientsForExcitation(
+    int excitation_idx, SumVectorCoefficient &fb)
+{
+  // Explicitly indexed sources are driven only for their matching excitation. Sources with
+  // no excitation index keep the legacy behavior and are driven for every excitation.
+  for (const auto &[idx, data] : sources)
+  {
+    if (!data.HasExcitation() || data.excitation == excitation_idx)
+    {
+      AddExcitationBdrCoefficients(data, fb);
+    }
+  }
+}
+
 void SurfaceCurrentOperator::AddExcitationBdrCoefficients(const SurfaceCurrentData &data,
                                                           SumVectorCoefficient &fb)
 {
-  // Add excited boundaries to the linear form, with a unit current distributed across
-  // all elements of the current source in parallel.
+  // Add excited boundaries to the linear form, distributing the configured source current
+  // across all elements of the current source in parallel.
   for (const auto &elem : data.elems)
   {
-    const double Jinc = 1.0 / (elem->GetGeometryWidth() * data.elems.size());
+    const double Jinc = data.current / (elem->GetGeometryWidth() * data.elems.size());
     fb.AddCoefficient(elem->GetModeCoefficient(-Jinc));
   }
 }

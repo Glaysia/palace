@@ -64,6 +64,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dim[k].P = units.Dimensionalize<Units::ValueType::POWER>(data.P);
       dim[k].V = units.Dimensionalize<Units::ValueType::VOLTAGE>(data.V),
       dim[k].I = units.Dimensionalize<Units::ValueType::CURRENT>(data.I),
+      dim[k].I_field = units.Dimensionalize<Units::ValueType::CURRENT>(data.I_field),
       dim[k].I_RLC = {units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[0]),
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
@@ -108,6 +109,10 @@ Measurement Measurement::Dimensionalize(const Units &units,
     else if (data.type == SurfaceFlux::POWER)
     {
       flux.Phi *= units.GetScaleFactor<Units::ValueType::POWER>();
+    }
+    else if (data.type == SurfaceFlux::CURRENT)
+    {
+      flux.Phi *= units.GetScaleFactor<Units::ValueType::CURRENT>();
     }
   }
 
@@ -174,6 +179,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dim[k].P = units.Nondimensionalize<Units::ValueType::POWER>(data.P);
       dim[k].V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(data.V),
       dim[k].I = units.Nondimensionalize<Units::ValueType::CURRENT>(data.I),
+      dim[k].I_field = units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_field),
       dim[k].I_RLC = {units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[0]),
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
@@ -218,6 +224,10 @@ Measurement Measurement::Nondimensionalize(const Units &units,
     else if (data.type == SurfaceFlux::POWER)
     {
       flux.Phi /= units.GetScaleFactor<Units::ValueType::POWER>();
+    }
+    else if (data.type == SurfaceFlux::CURRENT)
+    {
+      flux.Phi /= units.GetScaleFactor<Units::ValueType::CURRENT>();
     }
   }
 
@@ -532,6 +542,20 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceF(const SurfacePostOperator &su
           t.insert(fmt::format("F_{}_{}_re", idx, ex_idx),
                    fmt::format("Φ_pow[{}]{} (W)", idx, ex_label), ex_idx);
           break;
+        case SurfaceFlux::CURRENT:
+          if (HasComplexGridFunction<solver_t>())
+          {
+            t.insert(fmt::format("F_{}_{}_re", idx, ex_idx),
+                     fmt::format("Re{{I_flux[{}]{}}} (A)", idx, ex_label), ex_idx);
+            t.insert(fmt::format("F_{}_{}_im", idx, ex_idx),
+                     fmt::format("Im{{I_flux[{}]{}}} (A)", idx, ex_label), ex_idx);
+          }
+          else
+          {
+            t.insert(fmt::format("F_{}_{}_re", idx, ex_idx),
+                     fmt::format("I_flux[{}]{} (A)", idx, ex_label), ex_idx);
+          }
+          break;
       }
     }
   }
@@ -550,7 +574,8 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
   {
     surface_F->table[fmt::format("F_{}_{}_re", data.idx, m_ex_idx)] << data.Phi.real();
     if (HasComplexGridFunction<solver_t>() &&
-        (data.type == SurfaceFlux::ELECTRIC || data.type == SurfaceFlux::MAGNETIC))
+        (data.type == SurfaceFlux::ELECTRIC || data.type == SurfaceFlux::MAGNETIC ||
+         data.type == SurfaceFlux::CURRENT))
     {
       surface_F->table[fmt::format("F_{}_{}_im", data.idx, m_ex_idx)] << data.Phi.imag();
     }
@@ -875,7 +900,10 @@ auto PostOperatorCSV<solver_t>::PrintSurfaceI(const SurfaceCurrentOperator &surf
   CheckAppendIndex(surface_I->table["idx"], row_idx_v, row_i);
   for (const auto &[idx, data] : surf_j_op)
   {
-    auto I_inc_raw = data.GetExcitationCurrent() * measurement_cache.Jcoeff_excitation;
+    const bool is_excited = !data.HasExcitation() || data.excitation == m_ex_idx;
+    auto I_inc_raw =
+        is_excited ? data.GetExcitationCurrent() * measurement_cache.Jcoeff_excitation
+                   : 0.0;
     auto I_inc = units.Dimensionalize<Units::ValueType::CURRENT>(I_inc_raw);
     surface_I->table[fmt::format("I_{}_{}", idx, m_ex_idx)] << I_inc;
   }
@@ -897,16 +925,20 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
   const auto &lumped_port_op = fem_op.GetLumpedPortOp();
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
+  port_I_field = TableWithCSVFile(post_dir / "port-I-field.csv", reload_table);
 
   Table tV;  // Define table locally first due to potential reload.
   Table tI;
+  Table tI_field;
 
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() * lumped_port_op.Size();
   tV.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   tI.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
+  tI_field.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
 
   tV.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   tI.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  tI_field.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   for (const auto ex_idx : ex_idx_v_all)
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
@@ -935,6 +967,12 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                   fmt::format("Re{{I[{}]{}}} (A)", idx, ex_label), ex_idx);
         tI.insert(fmt::format("im{}_{}", idx, ex_idx),
                   fmt::format("Im{{I[{}]{}}} (A)", idx, ex_label), ex_idx);
+        tI_field.insert(fmt::format("re{}_{}", idx, ex_idx),
+                        fmt::format("Re{{I_field[{}]{}}} (A)", idx, ex_label),
+                        ex_idx);
+        tI_field.insert(fmt::format("im{}_{}", idx, ex_idx),
+                        fmt::format("Im{{I_field[{}]{}}} (A)", idx, ex_label),
+                        ex_idx);
       }
       else
       {
@@ -942,11 +980,14 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                   fmt::format("V[{}]{} (V)", idx, ex_label), ex_idx);
         tI.insert(fmt::format("re{}_{}", idx, ex_idx),
                   fmt::format("I[{}]{} (A)", idx, ex_label), ex_idx);
+        tI_field.insert(fmt::format("re{}_{}", idx, ex_idx),
+                        fmt::format("I_field[{}]{} (A)", idx, ex_label), ex_idx);
       }
     }
   }
   MoveTableValidateReload(*port_V, std::move(tV));
   MoveTableValidateReload(*port_I, std::move(tI));
+  MoveTableValidateReload(*port_I_field, std::move(tI_field));
 }
 
 template <ProblemType solver_t>
@@ -957,7 +998,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
                             U == ProblemType::TRANSIENT,
                         void>
 {
-  if (!port_V)  // no need to recheck port_I
+  if (!port_V)  // no need to recheck port_I and port_I_field
   {
     return;
   }
@@ -967,6 +1008,7 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
 
   CheckAppendIndex(port_V->table["idx"], row_idx_v, row_i);
   CheckAppendIndex(port_I->table["idx"], row_idx_v, row_i);
+  CheckAppendIndex(port_I_field->table["idx"], row_idx_v, row_i);
 
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
@@ -993,15 +1035,19 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
   {
     port_V->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.V.real();
     port_I->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I.real();
+    port_I_field->table[fmt::format("re{}_{}", idx, m_ex_idx)] << data.I_field.real();
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag();
       port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag();
+      port_I_field->table[fmt::format("im{}_{}", idx, m_ex_idx)]
+          << data.I_field.imag();
     }
   }
   port_V->WriteFullTableTrunc();
   port_I->WriteFullTableTrunc();
+  port_I_field->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>

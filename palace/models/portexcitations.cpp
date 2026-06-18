@@ -102,13 +102,22 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     excitations.at(port.excitation).wave_port.push_back(idx);
   }
 
-  // Surface currents are always excited. Add them to all single existing excitations.
-  std::vector<int> current_port_idx;
+  // Surface currents with an explicit excitation index are attached to that excitation.
+  // Sources without an excitation index keep the legacy behavior: always excited.
+  std::vector<int> current_port_always_idx;
   for (const auto &[idx, port] : surf_j_op)
   {
-    current_port_idx.push_back(idx);
+    if (port.HasExcitation())
+    {
+      excitations.try_emplace(port.excitation, SingleExcitationSpec{});
+      excitations.at(port.excitation).current_port.push_back(idx);
+    }
+    else
+    {
+      current_port_always_idx.push_back(idx);
+    }
   }
-  if (!current_port_idx.empty())
+  if (!current_port_always_idx.empty())
   {
     if (excitations.empty())
     {
@@ -116,7 +125,8 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     }
     for (auto &[ex_idx, ex_spec] : excitations)
     {
-      ex_spec.current_port = current_port_idx;
+      ex_spec.current_port.insert(ex_spec.current_port.end(), current_port_always_idx.begin(),
+                                  current_port_always_idx.end());
     }
   }
 

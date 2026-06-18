@@ -146,20 +146,26 @@ private:
   const MaterialOperator &mat_op;
   bool two_sided;
   const mfem::Vector &x0;
+  double omega;
+  bool current_displacement;
   void GetLocalFlux(mfem::ElementTransformation &T, mfem::Vector &V) const;
 
 public:
   BdrSurfaceFluxCoefficient(const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
                             const MaterialOperator &mat_op, bool two_sided,
-                            const mfem::Vector &x0, double scaling = 1.0)
+                            const mfem::Vector &x0, double scaling = 1.0,
+                            double omega = 0.0, bool current_displacement = false)
     : mfem::Coefficient(),
       BdrGridFunctionCoefficient(
           E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh(), scaling),
-      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0)
+      E(E), B(B), mat_op(mat_op), two_sided(two_sided), x0(x0), omega(omega),
+      current_displacement(current_displacement)
   {
     MFEM_VERIFY((E || (Type != SurfaceFlux::ELECTRIC && Type != SurfaceFlux::POWER)) &&
                     (B || (Type != SurfaceFlux::MAGNETIC && Type != SurfaceFlux::POWER)),
                 "Missing E or B field grid function for surface flux coefficient!");
+    MFEM_VERIFY(E || Type != SurfaceFlux::CURRENT,
+                "Missing E field grid function for current surface flux coefficient!");
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
@@ -251,6 +257,30 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
   E->GetVectorValue(T, T.GetIntPoint(), W1);
   V.SetSize(W1.Size());
   linalg::Cross3(W1, W2, V);
+  V *= scaling;
+}
+
+template <>
+inline void BdrSurfaceFluxCoefficient<SurfaceFlux::CURRENT>::GetLocalFlux(
+    mfem::ElementTransformation &T, mfem::Vector &V) const
+{
+  // Flux J = (σ + ω ε″) E + iω ε′ E.  The real/imaginary assembly happens in
+  // SurfacePostOperator::GetSurfaceFlux so the scalar coefficient can stay real-valued.
+  double W_data[3];
+  mfem::Vector W(W_data, T.GetSpaceDim());
+  E->GetVectorValue(T, T.GetIntPoint(), W);
+  if (current_displacement)
+  {
+    mat_op.GetPermittivityReal(T.Attribute).Mult(W, V);
+  }
+  else
+  {
+    double V_loss_data[3];
+    mfem::Vector V_loss(V_loss_data, T.GetSpaceDim());
+    mat_op.GetConductivity(T.Attribute).Mult(W, V);
+    mat_op.GetPermittivityImag(T.Attribute).Mult(W, V_loss);
+    V.Add(omega, V_loss);
+  }
   V *= scaling;
 }
 
