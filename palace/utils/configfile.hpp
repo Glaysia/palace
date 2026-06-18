@@ -341,6 +341,25 @@ public:
   CurrentDipoleData(const json &source);
 };
 
+struct VolumeCurrentData
+{
+public:
+  // Source excitation index.
+  int excitation = 0;
+
+  // Volume current source direction (normalized unit vector).
+  std::array<double, 3> direction{{0.0, 0.0, 0.0}};
+
+  // Current density magnitude [A/m^2].
+  double current_density = 0.0;
+
+  // List of domain attributes for this source.
+  std::vector<int> attributes = {};
+
+  VolumeCurrentData() = default;
+  VolumeCurrentData(const json &source);
+};
+
 struct DomainData
 {
 public:
@@ -350,6 +369,7 @@ public:
   // Domain objects.
   std::vector<MaterialData> materials = {};
   std::map<int, CurrentDipoleData> current_dipole = {};
+  std::map<int, VolumeCurrentData> volume_current = {};
   DomainPostData postpro = {};
 
   DomainData() = default;

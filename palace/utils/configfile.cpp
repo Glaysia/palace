@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <sstream>
 #include <string_view>
@@ -503,6 +504,40 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   moment = source.at("Moment");                               // Required
 }
 
+VolumeCurrentData::VolumeCurrentData(const json &source)
+{
+  excitation = source.at("Excitation");  // Required
+  MFEM_VERIFY(excitation > 0, "\"VolumeCurrent\" \"Excitation\" must be positive!");
+
+  const auto &dir = source.at("Direction");  // Required
+  if (dir.is_array())
+  {
+    direction = dir.get<std::array<double, 3>>();
+    double norm = 0.0;
+    for (const auto &x : direction)
+    {
+      norm += x * x;
+    }
+    norm = std::sqrt(norm);
+    MFEM_VERIFY(norm > 0.0, "\"VolumeCurrent\" \"Direction\" magnitude must be positive!");
+    for (auto &x : direction)
+    {
+      x /= norm;
+    }
+  }
+  else
+  {
+    auto direction_and_coord = ParseStringAsDirection(dir.get<std::string>());
+    direction = direction_and_coord.first;
+  }
+
+  current_density = source.at("CurrentDensity");  // Required
+  MFEM_VERIFY(current_density != 0.0,
+              "\"VolumeCurrent\" \"CurrentDensity\" must be nonzero!");
+  attributes = source.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+}
+
 DomainData::DomainData(const json &domains)
 {
   for (const auto &d : domains.at("Materials"))
@@ -511,6 +546,8 @@ DomainData::DomainData(const json &domains)
   }
   current_dipole = ParseOptionalMap<CurrentDipoleData>(domains, "CurrentDipole",
                                                        "\"CurrentDipole\" source");
+  volume_current = ParseOptionalMap<VolumeCurrentData>(domains, "VolumeCurrent",
+                                                       "\"VolumeCurrent\" source");
   postpro = ParseOptional<DomainPostData>(domains, "Postprocessing");
 
   // Store all unique domain attributes.
@@ -521,6 +558,16 @@ DomainData::DomainData(const json &domains)
   std::sort(attributes.begin(), attributes.end());
   attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
   attributes.shrink_to_fit();
+  for (const auto &[idx, data] : volume_current)
+  {
+    for (const auto &attr : data.attributes)
+    {
+      auto it = std::lower_bound(attributes.begin(), attributes.end(), attr);
+      MFEM_VERIFY(it != attributes.end() && *it == attr,
+                  "Volume current sources can only be enabled on domains which have a "
+                  "corresponding \"Materials\" entry!");
+    }
+  }
   for (const auto &attr : postpro.attributes)
   {
     MFEM_VERIFY(std::lower_bound(attributes.begin(), attributes.end(), attr) !=

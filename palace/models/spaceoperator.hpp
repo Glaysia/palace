@@ -19,6 +19,7 @@
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/volumecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 
 namespace palace
@@ -68,6 +69,7 @@ private:
 
   // Operators for boundary conditions and source excitations.
   CurrentDipoleOperator current_dipole_op;
+  VolumeCurrentOperator volume_current_op;
   FarfieldBoundaryOperator farfield_op;
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
@@ -154,9 +156,11 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  auto &GetVolumeCurrentOp() { return volume_current_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetVolumeCurrentOp() const { return volume_current_op; }
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

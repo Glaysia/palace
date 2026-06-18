@@ -18,6 +18,10 @@ SPDX-License-Identifier: Apache-2.0
     [
         ...
     ],
+    "VolumeCurrent":
+    [
+        ...
+    ],
     "Postprocessing":
     {
         "Energy":
@@ -37,6 +41,9 @@ with
 `"Materials"` :  Array of material properties objects.
 
 `"CurrentDipole"` :  Array of objects for configuring current dipole source excitations.
+
+`"VolumeCurrent"` :  Array of objects for configuring volume current density source
+excitations.
 
 `"Postprocessing"` :  Top-level object for configuring domain postprocessing.
 
@@ -150,6 +157,39 @@ normalized array of three values, for example `[0.0, 1.0, 0.0]`.
 
 `"Center" [None]` :  Floating point array of length equal to the model spatial dimension
 specifying the coordinates of the current dipole center position in mesh length units.
+
+## `domains["VolumeCurrent"]`
+
+```json
+"VolumeCurrent":
+[
+    {
+        "Index": <int>,
+        "Excitation": <int>,
+        "Attributes": [<int array>],
+        "Direction": [<float array>],
+        "CurrentDensity": <float>
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` :  Index of this volume current source, used in excitation bookkeeping.
+
+`"Excitation" [None]` :  Driven excitation index for this source. The source contributes
+only to the matching excitation.
+
+`"Attributes" [None]` :  Integer array of mesh domain attributes where this source current
+density is applied. These attributes must also have corresponding `"Materials"` entries.
+
+`"Direction" [None]` :  Direction of the impressed current density. Axis aligned directions
+can be specified using keywords: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`. The
+direction can alternatively be specified as a normalized array of three values, for example
+`[0.0, 1.0, 0.0]`.
+
+`"CurrentDensity" [None]` :  Current density magnitude, specified in A/m^2.
 
 ## `domains["Postprocessing"]["Energy"]`
 

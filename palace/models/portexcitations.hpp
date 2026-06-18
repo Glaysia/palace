@@ -15,6 +15,7 @@ class LumpedPortOperator;
 class WavePortOperator;
 class SurfaceCurrentOperator;
 class CurrentDipoleOperator;
+class VolumeCurrentOperator;
 
 // Small helper class to collect data of what (lumped / wave / surface current / current
 // dipole) sources are excited in driven and transient simulation, as stored in space_op;
@@ -26,7 +27,8 @@ enum class PortType : std::uint8_t
   WavePort = 1,
   CurrentPort = 2,
   CurrentDipole = 3,
-  Undefined = 4
+  VolumeCurrent = 4,
+  Undefined = 5
 };
 
 class PortExcitations
@@ -38,6 +40,7 @@ public:
     std::vector<int> wave_port = {};
     std::vector<int> current_port = {};
     std::vector<int> current_dipole = {};
+    std::vector<int> volume_current = {};
 
     // TODO: C++20 to replace this with iterator over joined range.
     auto FlattenPortIndices() const
@@ -47,6 +50,7 @@ public:
       out.insert(out.end(), wave_port.cbegin(), wave_port.cend());
       out.insert(out.end(), current_port.cbegin(), current_port.cend());
       out.insert(out.end(), current_dipole.cbegin(), current_dipole.cend());
+      out.insert(out.end(), volume_current.cbegin(), volume_current.cend());
       return out;
     }
 
@@ -57,22 +61,32 @@ public:
       auto n_wave = wave_port.size();
       auto n_current = current_port.size();
       auto n_dipole = current_dipole.size();
+      auto n_volume = volume_current.size();
 
-      if (n_lumped == 1 && n_wave == 0 && n_current == 0 && n_dipole == 0)
+      if (n_lumped == 1 && n_wave == 0 && n_current == 0 && n_dipole == 0 &&
+          n_volume == 0)
       {
         return std::make_tuple(true, PortType::LumpedPort, lumped_port.at(0));
       }
-      else if (n_lumped == 0 && n_wave == 1 && n_current == 0 && n_dipole == 0)
+      else if (n_lumped == 0 && n_wave == 1 && n_current == 0 && n_dipole == 0 &&
+               n_volume == 0)
       {
         return std::make_tuple(true, PortType::WavePort, wave_port.at(0));
       }
-      else if (n_lumped == 0 && n_wave == 0 && n_current == 1 && n_dipole == 0)
+      else if (n_lumped == 0 && n_wave == 0 && n_current == 1 && n_dipole == 0 &&
+               n_volume == 0)
       {
         return std::make_tuple(true, PortType::CurrentPort, current_port.at(0));
       }
-      else if (n_lumped == 0 && n_wave == 0 && n_current == 0 && n_dipole == 1)
+      else if (n_lumped == 0 && n_wave == 0 && n_current == 0 && n_dipole == 1 &&
+               n_volume == 0)
       {
         return std::make_tuple(true, PortType::CurrentDipole, current_dipole.at(0));
+      }
+      else if (n_lumped == 0 && n_wave == 0 && n_current == 0 && n_dipole == 0 &&
+               n_volume == 1)
+      {
+        return std::make_tuple(true, PortType::VolumeCurrent, volume_current.at(0));
       }
       else
       {
@@ -91,7 +105,8 @@ public:
   PortExcitations(const LumpedPortOperator &lumped_port_op,
                   const WavePortOperator &wave_port_op,
                   const SurfaceCurrentOperator &surf_j_op,
-                  const CurrentDipoleOperator &dipole_op);
+                  const CurrentDipoleOperator &dipole_op,
+                  const VolumeCurrentOperator &volume_j_op);
 
   [[nodiscard]] int MaxIdx() const
   {

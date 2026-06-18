@@ -48,6 +48,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
     mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back()),
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
+    volume_current_op(domains.volume_current, units, *mesh.back()),
     farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
     surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
@@ -56,7 +57,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
     surf_j_op(boundaries.current, *mesh.back()),
-    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
+    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op,
+                           volume_current_op)
 {
   // Check Excitations.
   if (problem_type == ProblemType::DRIVEN)
@@ -1013,12 +1015,13 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
   surf_j_op.AddExcitationBdrCoefficientsForExcitation(excitation_idx, fb);
 
-  // Domain sources (current dipoles) - use integrator-based approach
+  // Domain sources use integrator-based assembly.
   bool has_current_dipoles = !current_dipole_op.Empty();
+  bool has_volume_currents = !volume_current_op.Empty();
 
-  int empty[2] = {(fb.empty()), (!has_current_dipoles)};
-  Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
+  int empty[3] = {(fb.empty()), (!has_current_dipoles), (!has_volume_currents)};
+  Mpi::GlobalMin(3, empty, GetComm());
+  if (empty[0] && empty[1] && empty[2])
   {
     return false;
   }
@@ -1035,6 +1038,12 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   if (!empty[1])
   {
     current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+  }
+
+  // Add domain integrators for volume current sources.
+  if (!empty[2])
+  {
+    volume_current_op.AddExcitationDomainIntegratorsForExcitation(excitation_idx, rhs1);
   }
 
   rhs1.UseFastAssembly(false);

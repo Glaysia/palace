@@ -6,6 +6,7 @@
 #include "currentdipoleoperator.hpp"
 #include "lumpedportoperator.hpp"
 #include "surfacecurrentoperator.hpp"
+#include "volumecurrentoperator.hpp"
 #include "waveportoperator.hpp"
 
 #include <fmt/format.h>
@@ -47,6 +48,12 @@ namespace palace
                      (ex.current_dipole.size() > 1) ? "s" : "",
                      fmt::join(ex.current_dipole, " "));
     }
+    if (!ex.volume_current.empty())
+    {
+      fmt::format_to(out, " Volume current source{} {:2d}\n",
+                     (ex.volume_current.size() > 1) ? "s" : "",
+                     fmt::join(ex.volume_current, " "));
+    }
     i++;
   }
   return fmt::to_string(buf);
@@ -57,7 +64,8 @@ void to_json(nlohmann::json &j, const PortExcitations::SingleExcitationSpec &p)
   j = nlohmann::json{{"LumpedPort", p.lumped_port},
                      {"WavePort", p.wave_port},
                      {"SurfaceCurrent", p.current_port},
-                     {"CurrentDipole", p.current_dipole}};
+                     {"CurrentDipole", p.current_dipole},
+                     {"VolumeCurrent", p.volume_current}};
 }
 
 void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p)
@@ -66,6 +74,7 @@ void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p
   j.at("WavePort").get_to(p.wave_port);
   j.at("SurfaceCurrent").get_to(p.current_port);
   j.at("CurrentDipole").get_to(p.current_dipole);
+  j.at("VolumeCurrent").get_to(p.volume_current);
 }
 
 void to_json(nlohmann::json &j, const PortExcitations &p)
@@ -81,7 +90,8 @@ void from_json(const nlohmann::json &j, PortExcitations &p)
 PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
                                  const WavePortOperator &wave_port_op,
                                  const SurfaceCurrentOperator &surf_j_op,
-                                 const CurrentDipoleOperator &dipole_op)
+                                 const CurrentDipoleOperator &dipole_op,
+                                 const VolumeCurrentOperator &volume_j_op)
 {
   for (const auto &[idx, port] : lumped_port_op)
   {
@@ -146,6 +156,14 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     {
       ex_spec.current_dipole = current_dipole_idx;
     }
+  }
+
+  for (const auto &[idx, source] : volume_j_op)
+  {
+    MFEM_VERIFY(source.HasExcitation(),
+                "Volume current sources must specify an excitation index!");
+    excitations.try_emplace(source.excitation, SingleExcitationSpec{});
+    excitations.at(source.excitation).volume_current.push_back(idx);
   }
 };
 
