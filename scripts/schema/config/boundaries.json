@@ -97,6 +97,8 @@
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+          "Length": { "type": "number", "exclusiveMinimum": 0 },
+          "Width": { "type": "number", "exclusiveMinimum": 0 },
           "R": { "type": "number" },
           "L": { "type": "number" },
           "C": { "type": "number" },
@@ -123,7 +125,9 @@
               {
                 "Attributes": { "$ref": "#/$defs/Attributes" },
                 "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
+                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+                "Length": { "type": "number", "exclusiveMinimum": 0 },
+                "Width": { "type": "number", "exclusiveMinimum": 0 }
               }
             }
           }

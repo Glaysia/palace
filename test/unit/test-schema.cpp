@@ -214,7 +214,8 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
   SECTION("Valid LumpedPort with optional fields")
   {
     json port = {{"Index", 1}, {"Attributes", {1}}, {"R", 50.0},
-                 {"L", 1e-9},  {"C", 1e-12},        {"Excitation", true}};
+                 {"L", 1e-9},  {"C", 1e-12},        {"Excitation", true},
+                 {"Length", 1.0}, {"Width", 2.0}};
     std::string err = ValidateConfig(port, "LumpedPort");
     INFO("Error: " << err);
     CHECK(err.empty());
@@ -485,7 +486,11 @@ TEST_CASE("Schema Validation - Required Field Checks", "[schema][Serial]")
 
     // Valid: with Elements
     json port_elems = {{"Index", 1},
-                       {"Elements", {{{"Attributes", {1}}, {"Direction", "+X"}}}}};
+                       {"Elements",
+                        {{{"Attributes", {1}},
+                          {"Direction", "+X"},
+                          {"Length", 1.0},
+                          {"Width", 2.0}}}}};
     err = ValidateConfig(port_elems, "LumpedPort");
     INFO("Error: " << err);
     CHECK(err.empty());
