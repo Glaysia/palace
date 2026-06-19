@@ -36,6 +36,11 @@ struct ElementData
 
   CoordinateSystem coordinate_system = CoordinateSystem::CARTESIAN;
 
+  // Optional explicit lumped element geometry in mesh length units. When both are set,
+  // these override bounding-box geometry inference for skewed terminal sheets.
+  double length = 0.0;
+  double width = 0.0;
+
   // List of boundary attributes for this element.
   std::vector<int> attributes = {};
 };

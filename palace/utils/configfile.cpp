@@ -267,6 +267,12 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
 {
   data.attributes = elem.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(data.attributes.begin(), data.attributes.end());
+  data.length = elem.value("Length", data.length);
+  data.width = elem.value("Width", data.width);
+  MFEM_VERIFY((data.length == 0.0 && data.width == 0.0) ||
+                  (data.length > 0.0 && data.width > 0.0),
+              "\"Length\" and \"Width\" must either both be positive or both be "
+              "omitted for a lumped element!");
   auto it = elem.find("Direction");
   if (it != elem.end() && it->is_array())
   {
@@ -1603,6 +1609,11 @@ void Nondimensionalize(const Units &units, LumpedPortData &data)
   data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
   data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  for (auto &elem : data.elements)
+  {
+    elem.length /= units.GetMeshLengthRelativeScale();
+    elem.width /= units.GetMeshLengthRelativeScale();
+  }
 }
 
 void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)

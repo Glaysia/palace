@@ -14,11 +14,38 @@ namespace palace
 
 UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
-                                       const mfem::ParMesh &mesh)
+                                       const mfem::ParMesh &mesh, double input_l,
+                                       double input_w)
   : LumpedElementData(attr_list)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+
+  direction.SetSize(input_dir.size());
+  std::copy(input_dir.begin(), input_dir.end(), direction.begin());
+  direction /= direction.Norml2();
+
+  const double area = mesh::GetSurfaceArea(mesh, attr_marker);
+  MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
+  MFEM_VERIFY((input_l == 0.0 && input_w == 0.0) ||
+                  (input_l > 0.0 && input_w > 0.0),
+              "Uniform lumped element explicit length and width must either both be "
+              "positive or both be omitted!");
+  if (input_l > 0.0)
+  {
+    l = input_l;
+    w = input_w;
+    constexpr double area_rel_tol = 1.0e-6;
+    if (std::abs(area - l * w) >= area_rel_tol * area)
+    {
+      Mpi::Warning("Explicit lumped element length*width ({:.16e}) differs from "
+                   "surface area ({:.16e}); using explicit geometry for port "
+                   "normalization!\n",
+                   l * w, area);
+    }
+    return;
+  }
+
   auto bounding_box = mesh::GetBoundingBox(mesh, attr_marker, true);
 
   // Check the user specified direction aligns with an axis direction.
@@ -46,9 +73,6 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                  deviations_deg[0], deviations_deg[1], deviations_deg[2],
                  angle_error_deg);
   }
-  direction.SetSize(input_dir.size());
-  std::copy(input_dir.begin(), input_dir.end(), direction.begin());
-  direction /= direction.Norml2();
 
   // Compute the length from the most aligned normal direction.
   constexpr double rel_tol = 1.0e-6;
@@ -71,8 +95,6 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   // and generalizes nicely to the case for an infinitely thin rectangular lumped element
   // with elements on both sides (for which the width computed from the bounding box would
   // be incorrect by a factor of 2).
-  double area = mesh::GetSurfaceArea(mesh, attr_marker);
-  MFEM_VERIFY(area > 0.0, "Uniform lumped element has zero area!");
   w = area / l;
 }
 

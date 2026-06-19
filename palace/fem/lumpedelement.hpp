@@ -44,7 +44,8 @@ private:
 
 public:
   UniformElementData(const std::array<double, 3> &input_dir,
-                     const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
+                     const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh,
+                     double input_l = 0.0, double input_w = 0.0);
 
   double GetGeometryLength() const override { return l; }
   double GetGeometryWidth() const override { return w; }

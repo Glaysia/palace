@@ -61,7 +61,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
         break;
       case CoordinateSystem::CARTESIAN:
         elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
+            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh,
+                                                 elem.length, elem.width));
         break;
     }
   }
