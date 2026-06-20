@@ -1141,6 +1141,20 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   // Compute the average voltage across the port.
   if (HasTerminalEdges())
   {
+    if (E.ParFESpace()->GetMaxElementOrder() != 1)
+    {
+      Mpi::Print("\nTerminal edge voltage path postprocessing currently supports only "
+                 "first-order ND edge DOFs; falling back to the lumped port surface "
+                 "voltage functional for this higher-order solve.\n");
+      InitializeLinearForms(*E.ParFESpace());
+      std::complex<double> dot((*v) * E.Real(), 0.0);
+      if (E.HasImag())
+      {
+        dot.imag((*v) * E.Imag());
+      }
+      Mpi::GlobalSum(1, &dot, E.GetComm());
+      return dot;
+    }
     const double weight = 1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
     std::complex<double> dot = 0.0;
     for (const auto &edge_pair : terminal_voltage_edges)
