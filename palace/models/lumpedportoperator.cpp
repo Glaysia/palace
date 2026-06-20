@@ -56,6 +56,92 @@ double Distance(const Point &a, const Point &b)
   return Norm(Subtract(a, b));
 }
 
+std::vector<int> UniqueAttributes(const mfem::Array<int> &attrs)
+{
+  std::vector<int> unique_attrs;
+  unique_attrs.reserve(attrs.Size());
+  for (int i = 0; i < attrs.Size(); i++)
+  {
+    if (std::find(unique_attrs.begin(), unique_attrs.end(), attrs[i]) == unique_attrs.end())
+    {
+      unique_attrs.push_back(attrs[i]);
+    }
+  }
+  return unique_attrs;
+}
+
+void PrintBoundaryAdjacencyDiagnostics(const mfem::ParMesh &mesh,
+                                       const mfem::Array<int> &attrs,
+                                       const std::string &label)
+{
+  const auto unique_attrs = UniqueAttributes(attrs);
+  if (unique_attrs.empty())
+  {
+    return;
+  }
+
+  const int domain_attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+  const int stride = domain_attr_max + 1;
+  std::vector<long long> counts(unique_attrs.size() * stride, 0);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int bdr_attr = mesh.GetBdrAttribute(be);
+    const auto it = std::find(unique_attrs.begin(), unique_attrs.end(), bdr_attr);
+    if (it == unique_attrs.end())
+    {
+      continue;
+    }
+
+    int elem_id = -1, info = 0;
+    mesh.GetBdrElementAdjacentElement(be, elem_id, info);
+    int domain_attr = 0;
+    if (elem_id >= 0)
+    {
+      domain_attr = mesh.GetAttribute(elem_id);
+      if (domain_attr < 0 || domain_attr > domain_attr_max)
+      {
+        domain_attr = 0;
+      }
+    }
+
+    const std::size_t attr_idx = std::distance(unique_attrs.begin(), it);
+    counts[attr_idx * stride + domain_attr]++;
+  }
+  Mpi::GlobalSum(static_cast<int>(counts.size()), counts.data(), mesh.GetComm());
+
+  fmt::memory_buffer buffer{};
+  auto out = fmt::appender{buffer};
+  fmt::format_to(out, "\nBoundary adjacency diagnostics for {}:\n", label);
+  for (std::size_t attr_idx = 0; attr_idx < unique_attrs.size(); attr_idx++)
+  {
+    long long total = 0;
+    for (int domain_attr = 0; domain_attr <= domain_attr_max; domain_attr++)
+    {
+      total += counts[attr_idx * stride + domain_attr];
+    }
+    fmt::format_to(out, " Boundary attr {:d}: total elements = {:d}",
+                   unique_attrs[attr_idx], total);
+    for (int domain_attr = 0; domain_attr <= domain_attr_max; domain_attr++)
+    {
+      const long long count = counts[attr_idx * stride + domain_attr];
+      if (count == 0)
+      {
+        continue;
+      }
+      if (domain_attr == 0)
+      {
+        fmt::format_to(out, ", adjacent attr <none/invalid> = {:d}", count);
+      }
+      else
+      {
+        fmt::format_to(out, ", adjacent attr {:d} = {:d}", domain_attr, count);
+      }
+    }
+    fmt::format_to(out, "\n");
+  }
+  Mpi::Print("{}", fmt::to_string(buffer));
+}
+
 std::pair<double, double> SegmentCoordinateAndDistance(const Point &x,
                                                        const TerminalEdge &edge)
 {
@@ -553,6 +639,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     {
       MFEM_VERIFY(elem.terminal_edges.size() == 2,
                   "\"TerminalEdges\" must contain exactly two endpoint pairs!");
+      PrintBoundaryAdjacencyDiagnostics(
+          mesh, attr_list, fmt::format("terminal lumped port element {:d}", elems.size()));
       terminal_edges.push_back({FindTerminalEdgeChain(mesh, elem.terminal_edges[0]),
                                 FindTerminalEdgeChain(mesh, elem.terminal_edges[1])});
       const auto voltage_edges =
