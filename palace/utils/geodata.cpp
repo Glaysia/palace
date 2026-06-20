@@ -1910,6 +1910,12 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
     {
       for (const auto &e : data.elements)
       {
+        if (!e.terminal_edges.empty())
+        {
+          // HFSS-style terminal ports can lie on material interfaces; crack them so both
+          // sides of the internal sheet remain available to the driven operator.
+          continue;
+        }
         auto attr_in_elem = [&](auto x)
         {
           return std::find(e.attributes.begin(), e.attributes.end(), x) !=
