@@ -1229,13 +1229,7 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
 
 bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
 {
-  for (const auto &[idx, data] : ports)
-  {
-    if (data.excitation == excitation_idx && data.HasTerminalEdges())
-    {
-      return true;
-    }
-  }
+  (void)excitation_idx;
   return false;
 }
 
