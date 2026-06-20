@@ -1619,6 +1619,13 @@ void Nondimensionalize(const Units &units, LumpedPortData &data)
   {
     elem.length /= units.GetMeshLengthRelativeScale();
     elem.width /= units.GetMeshLengthRelativeScale();
+    for (auto &edge : elem.terminal_edges)
+    {
+      for (auto &point : edge)
+      {
+        std::transform(point.begin(), point.end(), point.begin(), LengthScaler(units));
+      }
+    }
   }
 }
 
