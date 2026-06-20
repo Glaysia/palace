@@ -207,6 +207,64 @@ void SpaceOperator::CheckBoundaryProperties()
 namespace
 {
 
+class OwningSumOperator : public Operator
+{
+private:
+  std::vector<std::pair<std::unique_ptr<Operator>, double>> ops;
+  mutable Vector z;
+
+public:
+  OwningSumOperator(int size) : Operator(size) { z.UseDevice(true); }
+
+  void AddOperator(std::unique_ptr<Operator> &&op, double coeff = 1.0)
+  {
+    MFEM_VERIFY(op->Height() == height && op->Width() == width,
+                "Invalid operator size for OwningSumOperator!");
+    ops.emplace_back(std::move(op), coeff);
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    y = 0.0;
+    AddMult(x, y);
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override
+  {
+    y = 0.0;
+    AddMultTranspose(x, y);
+  }
+
+  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    for (const auto &[op, coeff] : ops)
+    {
+      op->AddMult(x, y, a * coeff);
+    }
+  }
+
+  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    for (const auto &[op, coeff] : ops)
+    {
+      op->AddMultTranspose(x, y, a * coeff);
+    }
+  }
+
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    diag.SetSize(width);
+    diag = 0.0;
+    z.SetSize(width);
+    for (const auto &[op, coeff] : ops)
+    {
+      z = 0.0;
+      op->AssembleDiagonal(z);
+      diag.Add(coeff, z);
+    }
+  }
+};
+
 void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                  const mfem::ParFiniteElementSpace &nd_fespace,
                  const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
@@ -348,9 +406,9 @@ std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
-  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()),
-      dfi(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
+  MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), dfi(mat_op.MaxCeedAttribute()),
+      f(mat_op.MaxCeedAttribute()), fb(mat_op.MaxCeedBdrAttribute()),
+      fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -400,14 +458,30 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute());
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
+  auto modal_lumped_port_c =
+      lumped_port_op.GetTerminalModalDampingOperator(GetNDSpace().Get());
   int empty = (f.empty() && fb.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
-  if (empty)
+  if (empty && !modal_lumped_port_c)
   {
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, skip_zeros);
+  std::unique_ptr<Operator> c;
+  if (!empty)
+  {
+    c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, skip_zeros);
+  }
+  if (modal_lumped_port_c)
+  {
+    auto sum = std::make_unique<OwningSumOperator>(GetNDSpace().GetVSize());
+    if (c)
+    {
+      sum->AddOperator(std::move(c));
+    }
+    sum->AddOperator(std::move(modal_lumped_port_c));
+    c = std::move(sum);
+  }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -844,9 +918,11 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
-void SpaceOperator::AddDispersiveMaterialCoefficients(
-    double omega, MaterialPropertyCoefficient &dfr, MaterialPropertyCoefficient &dfi,
-    MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi)
+void SpaceOperator::AddDispersiveMaterialCoefficients(double omega,
+                                                      MaterialPropertyCoefficient &dfr,
+                                                      MaterialPropertyCoefficient &dfi,
+                                                      MaterialPropertyCoefficient &fr,
+                                                      MaterialPropertyCoefficient &fi)
 {
   mfem::DenseTensor muinv_delta, muinv_imag_delta, epsilon_delta, epsilon_imag_delta;
   if (!mat_op.GetDispersiveMaterialProperties(omega, muinv_delta, muinv_imag_delta,

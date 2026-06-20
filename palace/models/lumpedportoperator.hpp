@@ -11,6 +11,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -174,6 +175,8 @@ public:
   // resistance, and/or capacitance.
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
+  std::unique_ptr<Operator>
+  GetTerminalModalDampingOperator(mfem::ParFiniteElementSpace &nd_fespace) const;
   void AddMassBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
 
   // Add contributions to the right-hand side source term vector for an incident field at

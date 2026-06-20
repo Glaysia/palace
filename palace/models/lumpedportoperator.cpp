@@ -13,6 +13,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/operator.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -251,6 +252,58 @@ public:
 
     potential.GetGradient(*T_submesh, V);
     V *= -scaling;
+  }
+};
+
+class TerminalModalDampingOperator : public Operator
+{
+private:
+  std::vector<Vector> modes;
+
+public:
+  TerminalModalDampingOperator(int size) : Operator(size) {}
+
+  void AddMode(const Vector &mode)
+  {
+    modes.emplace_back(mode.Size());
+    modes.back() = mode;
+    modes.back().UseDevice(true);
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    y = 0.0;
+    AddMult(x, y);
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+
+  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    for (const auto &mode : modes)
+    {
+      y.Add(a * (mode * x), mode);
+    }
+  }
+
+  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override
+  {
+    AddMult(x, y, a);
+  }
+
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    diag.SetSize(width);
+    diag = 0.0;
+    for (const auto &mode : modes)
+    {
+      const double *m = mode.HostRead();
+      double *d = diag.HostReadWrite();
+      for (int i = 0; i < mode.Size(); i++)
+      {
+        d[i] += m[i] * m[i];
+      }
+    }
   }
 };
 
@@ -622,6 +675,43 @@ LumpedPortData::GetModeCoefficient(std::size_t elem_idx, double coeff) const
     return terminal_sheet_modes[elem_idx]->GetCoefficient(coeff);
   }
   return elems[elem_idx]->GetModeCoefficient(coeff);
+}
+
+void AssemblePortModeLinearForm(const LumpedPortData &data,
+                                mfem::ParFiniteElementSpace &nd_fespace, Vector &mode)
+{
+  const auto &mesh = *nd_fespace.GetParMesh();
+  SumVectorCoefficient fb(mesh.SpaceDimension());
+  mfem::Array<int> attr_list;
+  for (std::size_t elem_idx = 0; elem_idx < data.elems.size(); elem_idx++)
+  {
+    const auto &elem = *data.elems[elem_idx];
+    const double Rs = data.R * data.GetToSquare(elem);
+    const bool terminal_mode =
+        elem_idx < data.terminal_sheet_modes.size() && data.terminal_sheet_modes[elem_idx];
+    const double Hinc =
+        (std::abs(Rs) > 0.0)
+            ? (terminal_mode
+                   ? std::sqrt(data.R) / Rs
+                   : 1.0 / std::sqrt(Rs * elem.GetGeometryWidth() *
+                                     elem.GetGeometryLength() * data.elems.size()))
+            : 0.0;
+    fb.AddCoefficient(data.GetModeCoefficient(elem_idx, Hinc));
+    attr_list.Append(elem.GetAttrList());
+  }
+
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  mfem::LinearForm lf(&nd_fespace);
+  lf.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
+  lf.UseFastAssembly(false);
+  lf.UseDevice(false);
+  lf.Assemble();
+  lf.UseDevice(true);
+
+  mode.SetSize(nd_fespace.GetVSize());
+  mode.UseDevice(true);
+  mode = lf;
 }
 
 std::complex<double>
@@ -1078,6 +1168,10 @@ mfem::Array<int> LumpedPortOperator::GetRsAttrList() const
     {
       continue;
     }
+    if (data.HasTerminalEdges())
+    {
+      continue;
+    }
     if (std::abs(data.R) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -1161,6 +1255,10 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
     {
       continue;
     }
+    if (data.HasTerminalEdges())
+    {
+      continue;
+    }
     if (std::abs(data.R) > 0.0)
     {
       for (const auto &elem : data.elems)
@@ -1171,6 +1269,27 @@ void LumpedPortOperator::AddDampingBdrCoefficients(double coeff,
       }
     }
   }
+}
+
+std::unique_ptr<Operator> LumpedPortOperator::GetTerminalModalDampingOperator(
+    mfem::ParFiniteElementSpace &nd_fespace) const
+{
+  std::unique_ptr<TerminalModalDampingOperator> op;
+  Vector mode;
+  for (const auto &[idx, data] : ports)
+  {
+    if (!data.active || !data.HasTerminalEdges() || std::abs(data.R) == 0.0)
+    {
+      continue;
+    }
+    AssemblePortModeLinearForm(data, nd_fespace, mode);
+    if (!op)
+    {
+      op = std::make_unique<TerminalModalDampingOperator>(nd_fespace.GetVSize());
+    }
+    op->AddMode(mode);
+  }
+  return op;
 }
 
 void LumpedPortOperator::AddMassBdrCoefficients(double coeff,
