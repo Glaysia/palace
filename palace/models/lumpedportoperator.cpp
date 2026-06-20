@@ -500,14 +500,14 @@ struct LumpedPortData::TerminalSheetMode
                    parent_mesh.GetComm());
 
     selected_adjacent_attr = 0;
-    selected_relative_permittivity = mfem::infinity();
+    selected_relative_permittivity = -mfem::infinity();
     for (int attr = 1; attr <= domain_attr_max; attr++)
     {
       if (adjacent_counts[attr] == 0)
       {
         continue;
       }
-      if (adjacent_eps[attr] < selected_relative_permittivity ||
+      if (adjacent_eps[attr] > selected_relative_permittivity ||
           (adjacent_eps[attr] == selected_relative_permittivity &&
            (selected_adjacent_attr == 0 || attr < selected_adjacent_attr)))
       {
