@@ -306,9 +306,13 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       {
         PrintBoundaryAdjacencySummary("single-rank before EnsureNCMesh", *smesh);
         smesh->EnsureNCMesh(true);
+        pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh);
+      }
+      else
+      {
+        pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
       }
       MPI_Comm_free(&node_comm);
-      pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
       smesh.reset();
     }
     else
