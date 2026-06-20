@@ -372,7 +372,7 @@ struct LumpedPortData::TerminalSheetMode
     a.RecoverFEMSolution(X, b, *potential);
   }
 
-  double ComputeNormSq() const
+  double ComputeNormSq()
   {
     const auto &mesh = port_mesh->Get();
     double local_norm = 0.0;
