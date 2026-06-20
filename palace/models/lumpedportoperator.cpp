@@ -542,6 +542,17 @@ struct LumpedPortData::TerminalSheetMode
     *potential = 0.0;
 
     mfem::Array<int> dofs;
+    mfem::Array<int> vertices;
+    std::unordered_set<int> boundary_vertices;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      mesh.GetBdrElementVertices(be, vertices);
+      for (int i = 0; i < vertices.Size(); i++)
+      {
+        boundary_vertices.insert(vertices[i]);
+      }
+    }
+
     std::set<int> ess_tdofs;
     std::set<int> signal_tdofs;
     int local_signal_vertices = 0, local_reference_vertices = 0;
@@ -549,7 +560,8 @@ struct LumpedPortData::TerminalSheetMode
     {
       const auto point = GetVertexPoint(mesh, v);
       const bool on_signal = VertexOnTerminalEdge(point, terminals[0]);
-      const bool on_reference = VertexOnTerminalEdge(point, terminals[1]);
+      const bool on_reference =
+          !on_signal && boundary_vertices.find(v) != boundary_vertices.end();
       MFEM_VERIFY(!(on_signal && on_reference),
                   "\"TerminalEdges\" signal and reference chains overlap on the port "
                   "sheet!");
