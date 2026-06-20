@@ -114,9 +114,13 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   const bool use_mesh_partitioner = [&]()
   {
     // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
-    // might be reused for nonadaptive simulations.
+    // might be reused for nonadaptive simulations. An initially conforming mesh can still
+    // use the mesh partitioner even when nonconformal AMR is requested; we convert the
+    // distributed ParMesh to an NCMesh below. This avoids the serial print/re-read path,
+    // which does not tolerate Palace's generated internal boundary elements on some
+    // tetrahedral meshes.
     BlockTimer bt(Timer::IO);
-    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+    bool use_mesh_partitioner = true;
     if (Mpi::Root(comm))
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
@@ -270,6 +274,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   if (use_mesh_partitioner)
   {
     pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
+    if (refinement.nonconformal && use_amr)
+    {
+      pmesh->EnsureNCMesh(true);
+    }
   }
   else
   {
