@@ -126,6 +126,8 @@ public:
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
 
+  void AddTerminalEdgeExcitationFunctional(const mfem::ParFiniteElementSpace &nd_fespace,
+                                           Vector &lf, double coeff) const;
   void AddTerminalEdgeVoltageFunctional(const mfem::ParFiniteElementSpace &nd_fespace,
                                         Vector &lf, double coeff) const;
 };

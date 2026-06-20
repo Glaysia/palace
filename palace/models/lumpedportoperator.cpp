@@ -97,12 +97,10 @@ LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mes
     {
       continue;
     }
-    const double sign = (Dot(Subtract(second, first), Subtract(edge[1], edge[0])) >= 0.0)
-                            ? 1.0
-                            : -1.0;
-    candidates.push_back(
-        Candidate{edge_idx, std::max(0.0, t_min), std::min(1.0, t_max),
-                  Distance(first, second), sign});
+    const double sign =
+        (Dot(Subtract(second, first), Subtract(edge[1], edge[0])) >= 0.0) ? 1.0 : -1.0;
+    candidates.push_back(Candidate{edge_idx, std::max(0.0, t_min), std::min(1.0, t_max),
+                                   Distance(first, second), sign});
   }
   std::sort(candidates.begin(), candidates.end(),
             [](const auto &a, const auto &b) { return a.t_min < b.t_min; });
@@ -233,18 +231,16 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
             std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
         break;
       case CoordinateSystem::CARTESIAN:
-        elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh,
-                                                 elem.length, elem.width));
+        elems.push_back(std::make_unique<UniformElementData>(
+            elem.direction, attr_list, mesh, elem.length, elem.width));
         break;
     }
     if (!elem.terminal_edges.empty())
     {
       MFEM_VERIFY(elem.terminal_edges.size() == 2,
                   "\"TerminalEdges\" must contain exactly two endpoint pairs!");
-      terminal_edges.push_back(
-          {FindTerminalEdgeChain(mesh, elem.terminal_edges[0]),
-           FindTerminalEdgeChain(mesh, elem.terminal_edges[1])});
+      terminal_edges.push_back({FindTerminalEdgeChain(mesh, elem.terminal_edges[0]),
+                                FindTerminalEdgeChain(mesh, elem.terminal_edges[1])});
       const auto voltage_edges =
           BuildTerminalVoltageEdges(elem.terminal_edges[0], elem.terminal_edges[1]);
       terminal_voltage_edges.push_back({FindTerminalEdgeChain(mesh, voltage_edges[0]),
@@ -384,6 +380,19 @@ void LumpedPortData::AddTerminalEdgeVoltageFunctional(
               "Terminal edge voltage functional requested for a non-terminal port!");
   const double weight = 1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
   for (const auto &edge_pair : terminal_voltage_edges)
+  {
+    AddTerminalEdgeChainFunctional(edge_pair[0], nd_fespace, lf, coeff * weight);
+    AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, coeff * weight);
+  }
+}
+
+void LumpedPortData::AddTerminalEdgeExcitationFunctional(
+    const mfem::ParFiniteElementSpace &nd_fespace, Vector &lf, double coeff) const
+{
+  MFEM_VERIFY(HasTerminalEdges(),
+              "Terminal edge excitation requested for a non-terminal port!");
+  const double weight = 1.0 / (2.0 * static_cast<double>(terminal_edges.size()));
+  for (const auto &edge_pair : terminal_edges)
   {
     AddTerminalEdgeChainFunctional(edge_pair[0], nd_fespace, lf, coeff * weight);
     AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, coeff * weight);
@@ -535,8 +544,7 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   // Compute the average voltage across the port.
   if (HasTerminalEdges())
   {
-    const double weight =
-        1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
+    const double weight = 1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
     std::complex<double> dot = 0.0;
     for (const auto &edge_pair : terminal_voltage_edges)
     {
@@ -544,10 +552,8 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
       dot.real(dot.real() + weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Real()));
       if (E.HasImag())
       {
-        dot.imag(dot.imag() +
-                 weight * IntegrateTerminalEdgeChain(edge_pair[0], E.Imag()));
-        dot.imag(dot.imag() +
-                 weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Imag()));
+        dot.imag(dot.imag() + weight * IntegrateTerminalEdgeChain(edge_pair[0], E.Imag()));
+        dot.imag(dot.imag() + weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Imag()));
       }
     }
     Mpi::GlobalSum(1, &dot, E.GetComm());
@@ -927,7 +933,7 @@ void LumpedPortOperator::AddTerminalEdgeExcitationVector(
     }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited terminal edge lumped port!");
-    data.AddTerminalEdgeVoltageFunctional(nd_fespace, lf, 2.0 / std::sqrt(data.R));
+    data.AddTerminalEdgeExcitationFunctional(nd_fespace, lf, 2.0 / std::sqrt(data.R));
   }
   lf.UseDevice(true);
   nd_fespace.GetProlongationMatrix()->AddMultTranspose(lf, rhs);
