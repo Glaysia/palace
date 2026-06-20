@@ -395,7 +395,7 @@ void LumpedPortData::AddTerminalEdgeExcitationFunctional(
   for (const auto &edge_pair : terminal_edges)
   {
     AddTerminalEdgeChainFunctional(edge_pair[0], nd_fespace, lf, coeff * weight);
-    AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, coeff * weight);
+    AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, -coeff * weight);
   }
 }
 
