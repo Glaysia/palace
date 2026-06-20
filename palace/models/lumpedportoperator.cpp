@@ -542,32 +542,6 @@ struct LumpedPortData::TerminalSheetMode
     *potential = 0.0;
 
     mfem::Array<int> dofs;
-    mfem::Array<int> vertices;
-    mfem::Array<int> edges;
-    mfem::Array<int> orientations;
-    std::unordered_map<int, int> selected_edge_counts;
-    for (int elem : selected_submesh_elems)
-    {
-      mesh.GetElementEdges(elem, edges, orientations);
-      for (int i = 0; i < edges.Size(); i++)
-      {
-        selected_edge_counts[edges[i]]++;
-      }
-    }
-    std::unordered_set<int> boundary_vertices;
-    for (const auto &[edge, count] : selected_edge_counts)
-    {
-      if (count != 1)
-      {
-        continue;
-      }
-      mesh.GetEdgeVertices(edge, vertices);
-      for (int i = 0; i < vertices.Size(); i++)
-      {
-        boundary_vertices.insert(vertices[i]);
-      }
-    }
-
     std::set<int> ess_tdofs;
     std::set<int> signal_tdofs;
     int local_signal_vertices = 0, local_reference_vertices = 0;
@@ -575,8 +549,7 @@ struct LumpedPortData::TerminalSheetMode
     {
       const auto point = GetVertexPoint(mesh, v);
       const bool on_signal = VertexOnTerminalEdge(point, terminals[0]);
-      const bool on_reference =
-          !on_signal && boundary_vertices.find(v) != boundary_vertices.end();
+      const bool on_reference = VertexOnTerminalEdge(point, terminals[1]);
       MFEM_VERIFY(!(on_signal && on_reference),
                   "\"TerminalEdges\" signal and reference chains overlap on the port "
                   "sheet!");
