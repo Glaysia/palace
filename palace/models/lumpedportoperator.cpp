@@ -1541,7 +1541,7 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
   // works for time domain simulations requiring RHS -U_inc(t).
   for (const auto &[idx, data] : ports)
   {
-    if (data.excitation != excitation_idx)
+    if (!data.active || data.excitation != excitation_idx)
     {
       continue;
     }
@@ -1575,7 +1575,7 @@ void LumpedPortOperator::AddTerminalEdgeExcitationVector(
   lf = 0.0;
   for (const auto &[idx, data] : ports)
   {
-    if (data.excitation != excitation_idx || !data.HasTerminalEdges())
+    if (!data.active || data.excitation != excitation_idx || !data.HasTerminalEdges())
     {
       continue;
     }

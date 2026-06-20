@@ -109,7 +109,7 @@ public:
     return norm_ht;
   }
 
-  constexpr bool HasExcitation() const { return excitation != 0; }
+  constexpr bool HasExcitation() const { return active && excitation != 0; }
   bool HasTerminalEdges() const { return !terminal_edges.empty(); }
 
   enum class Branch
