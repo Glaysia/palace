@@ -1014,43 +1014,54 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   lumped_port_op.AddExcitationBdrCoefficients(excitation_idx, fb);
   surf_j_op.AddExcitationBdrCoefficientsForExcitation(excitation_idx, fb);
+  const bool has_terminal_edge_ports =
+      lumped_port_op.HasTerminalEdgeExcitation(excitation_idx);
 
   // Domain sources use integrator-based assembly.
   bool has_current_dipoles = !current_dipole_op.Empty();
   bool has_volume_currents = !volume_current_op.Empty();
 
-  int empty[3] = {(fb.empty()), (!has_current_dipoles), (!has_volume_currents)};
-  Mpi::GlobalMin(3, empty, GetComm());
-  if (empty[0] && empty[1] && empty[2])
+  int empty[4] = {(fb.empty()), (!has_current_dipoles), (!has_volume_currents),
+                  (!has_terminal_edge_ports)};
+  Mpi::GlobalMin(4, empty, GetComm());
+  if (empty[0] && empty[1] && empty[2] && empty[3])
   {
     return false;
   }
 
-  mfem::LinearForm rhs1(&GetNDSpace().Get());
-
-  // Add boundary integrators
-  if (!empty[0])
+  if (!empty[0] || !empty[1] || !empty[2])
   {
-    rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
-  }
+    mfem::LinearForm rhs1(&GetNDSpace().Get());
 
-  // Add domain integrators for current dipoles
-  if (!empty[1])
+    // Add boundary integrators
+    if (!empty[0])
+    {
+      rhs1.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+    }
+
+    // Add domain integrators for current dipoles
+    if (!empty[1])
+    {
+      current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+    }
+
+    // Add domain integrators for volume current sources.
+    if (!empty[2])
+    {
+      volume_current_op.AddExcitationDomainIntegratorsForExcitation(excitation_idx, rhs1);
+    }
+
+    rhs1.UseFastAssembly(false);
+    rhs1.UseDevice(false);
+    rhs1.Assemble();
+    rhs1.UseDevice(true);
+    GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
+  }
+  if (!empty[3])
   {
-    current_dipole_op.AddExcitationDomainIntegrators(rhs1);
+    lumped_port_op.AddTerminalEdgeExcitationVector(excitation_idx, GetNDSpace().Get(),
+                                                   RHS1);
   }
-
-  // Add domain integrators for volume current sources.
-  if (!empty[2])
-  {
-    volume_current_op.AddExcitationDomainIntegratorsForExcitation(excitation_idx, rhs1);
-  }
-
-  rhs1.UseFastAssembly(false);
-  rhs1.UseDevice(false);
-  rhs1.Assemble();
-  rhs1.UseDevice(true);
-  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs1, RHS1);
   return true;
 }
 

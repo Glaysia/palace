@@ -11,6 +11,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
+#include "linalg/vector.hpp"
 
 namespace palace
 {
@@ -42,6 +43,7 @@ public:
   {
     TerminalEdge endpoints;
     std::vector<int> mesh_edges;
+    std::vector<double> mesh_edge_signs;
     int edge_count = 0;
     double length = 0.0;
   };
@@ -122,6 +124,9 @@ public:
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
+
+  void AddTerminalEdgeVoltageFunctional(const mfem::ParFiniteElementSpace &nd_fespace,
+                                        Vector &lf, double coeff) const;
 };
 
 //
@@ -170,6 +175,11 @@ public:
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
+
+  bool HasTerminalEdgeExcitation(int excitation_idx) const;
+  void AddTerminalEdgeExcitationVector(int excitation_idx,
+                                       const mfem::ParFiniteElementSpace &nd_fespace,
+                                       Vector &rhs) const;
 };
 
 }  // namespace palace

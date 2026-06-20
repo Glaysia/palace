@@ -75,6 +75,7 @@ LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mes
     double t_min;
     double t_max;
     double length;
+    double sign;
   };
   std::vector<Candidate> candidates;
   mfem::Array<int> vertices;
@@ -96,9 +97,12 @@ LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mes
     {
       continue;
     }
+    const double sign = (Dot(Subtract(second, first), Subtract(edge[1], edge[0])) >= 0.0)
+                            ? 1.0
+                            : -1.0;
     candidates.push_back(
         Candidate{edge_idx, std::max(0.0, t_min), std::min(1.0, t_max),
-                  Distance(first, second)});
+                  Distance(first, second), sign});
   }
   std::sort(candidates.begin(), candidates.end(),
             [](const auto &a, const auto &b) { return a.t_min < b.t_min; });
@@ -122,11 +126,54 @@ LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mes
   chain.edge_count = global_count;
   chain.length = global_length;
   chain.mesh_edges.reserve(candidates.size());
+  chain.mesh_edge_signs.reserve(candidates.size());
   for (const auto &candidate : candidates)
   {
     chain.mesh_edges.push_back(candidate.edge);
+    chain.mesh_edge_signs.push_back(candidate.sign);
   }
   return chain;
+}
+
+void AddTerminalEdgeChainFunctional(const LumpedPortData::TerminalEdgeChain &chain,
+                                    const mfem::ParFiniteElementSpace &nd_fespace,
+                                    mfem::Vector &lf, double coeff)
+{
+  MFEM_VERIFY(chain.mesh_edges.size() == chain.mesh_edge_signs.size(),
+              "Terminal edge chain metadata size mismatch!");
+  mfem::Array<int> dofs;
+  for (std::size_t i = 0; i < chain.mesh_edges.size(); i++)
+  {
+    nd_fespace.GetEdgeDofs(chain.mesh_edges[i], dofs);
+    MFEM_VERIFY(dofs.Size() == 1,
+                "\"TerminalEdges\" driven ports currently require first-order ND edge "
+                "DOFs!");
+    double dof_sign = 1.0;
+    const int ldof = mfem::FiniteElementSpace::DecodeDof(dofs[0], dof_sign);
+    lf(ldof) += coeff * chain.mesh_edge_signs[i] * dof_sign;
+  }
+}
+
+double IntegrateTerminalEdgeChain(const LumpedPortData::TerminalEdgeChain &chain,
+                                  const mfem::ParGridFunction &field)
+{
+  MFEM_VERIFY(chain.mesh_edges.size() == chain.mesh_edge_signs.size(),
+              "Terminal edge chain metadata size mismatch!");
+  const auto &nd_fespace = *field.ParFESpace();
+  const double *values = field.HostRead();
+  mfem::Array<int> dofs;
+  double value = 0.0;
+  for (std::size_t i = 0; i < chain.mesh_edges.size(); i++)
+  {
+    nd_fespace.GetEdgeDofs(chain.mesh_edges[i], dofs);
+    MFEM_VERIFY(dofs.Size() == 1,
+                "\"TerminalEdges\" driven ports currently require first-order ND edge "
+                "DOFs!");
+    double dof_sign = 1.0;
+    const int ldof = mfem::FiniteElementSpace::DecodeDof(dofs[0], dof_sign);
+    value += chain.mesh_edge_signs[i] * dof_sign * values[ldof];
+  }
+  return value;
 }
 
 }  // namespace
@@ -283,6 +330,10 @@ double LumpedPortData::GetExcitationVoltage() const
   // Incident voltage should be the same across all elements of an excited lumped port.
   if (HasExcitation())
   {
+    if (HasTerminalEdges())
+    {
+      return std::sqrt(R);
+    }
     double V_inc = 0.0;
     for (const auto &elem : elems)
     {
@@ -296,6 +347,19 @@ double LumpedPortData::GetExcitationVoltage() const
   else
   {
     return 0.0;
+  }
+}
+
+void LumpedPortData::AddTerminalEdgeVoltageFunctional(
+    const mfem::ParFiniteElementSpace &nd_fespace, Vector &lf, double coeff) const
+{
+  MFEM_VERIFY(HasTerminalEdges(),
+              "Terminal edge voltage functional requested for a non-terminal port!");
+  const double weight = 1.0 / (2.0 * static_cast<double>(terminal_edges.size()));
+  for (const auto &edge_pair : terminal_edges)
+  {
+    AddTerminalEdgeChainFunctional(edge_pair[0], nd_fespace, lf, coeff * weight);
+    AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, coeff * weight);
   }
 }
 
@@ -423,6 +487,12 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
 std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
 {
   // Compute port S-parameter, or the projection of the field onto the port mode.
+  if (HasTerminalEdges())
+  {
+    MFEM_VERIFY(std::abs(R) > 0.0,
+                "Terminal edge S-parameter requested for a port with zero resistance!");
+    return GetVoltage(E) / std::sqrt(R);
+  }
   InitializeLinearForms(*E.ParFESpace());
   std::complex<double> dot((*s) * E.Real(), 0.0);
   if (E.HasImag())
@@ -436,6 +506,25 @@ std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
 std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 {
   // Compute the average voltage across the port.
+  if (HasTerminalEdges())
+  {
+    const double weight = 1.0 / (2.0 * static_cast<double>(terminal_edges.size()));
+    std::complex<double> dot = 0.0;
+    for (const auto &edge_pair : terminal_edges)
+    {
+      dot.real(dot.real() + weight * IntegrateTerminalEdgeChain(edge_pair[0], E.Real()));
+      dot.real(dot.real() + weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Real()));
+      if (E.HasImag())
+      {
+        dot.imag(dot.imag() +
+                 weight * IntegrateTerminalEdgeChain(edge_pair[0], E.Imag()));
+        dot.imag(dot.imag() +
+                 weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Imag()));
+      }
+    }
+    Mpi::GlobalSum(1, &dot, E.GetComm());
+    return dot;
+  }
   InitializeLinearForms(*E.ParFESpace());
   std::complex<double> dot((*v) * E.Real(), 0.0);
   if (E.HasImag())
@@ -769,6 +858,10 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
+    if (data.HasTerminalEdges())
+    {
+      continue;
+    }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited lumped port!");
     for (const auto &elem : data.elems)
@@ -779,6 +872,37 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
       fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
     }
   }
+}
+
+bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
+{
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.excitation == excitation_idx && data.HasTerminalEdges())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void LumpedPortOperator::AddTerminalEdgeExcitationVector(
+    int excitation_idx, const mfem::ParFiniteElementSpace &nd_fespace, Vector &rhs) const
+{
+  Vector lf(nd_fespace.GetVSize());
+  lf = 0.0;
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.excitation != excitation_idx || !data.HasTerminalEdges())
+    {
+      continue;
+    }
+    MFEM_VERIFY(std::abs(data.R) > 0.0,
+                "Unexpected zero resistance in excited terminal edge lumped port!");
+    data.AddTerminalEdgeVoltageFunctional(nd_fespace, lf, 2.0 / std::sqrt(data.R));
+  }
+  lf.UseDevice(true);
+  nd_fespace.GetProlongationMatrix()->AddMultTranspose(lf, rhs);
 }
 
 }  // namespace palace
