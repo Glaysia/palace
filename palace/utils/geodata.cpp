@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iostream>
 #include <limits>
 #include <numeric>
 #include <queue>
@@ -38,6 +39,32 @@ namespace
 // Floating point precision for mesh IO. This precision is important, make sure nothing is
 // lost!
 constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
+
+void PrintBoundaryAdjacencySummary(const char *label, const mfem::Mesh &mesh)
+{
+  int exterior = 0, interior = 0, missing = 0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    int f, o, e1, e2;
+    mesh.GetBdrElementFace(be, &f, &o);
+    mesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0)
+    {
+      interior++;
+    }
+    else if (e1 >= 0 || e2 >= 0)
+    {
+      exterior++;
+    }
+    else
+    {
+      missing++;
+    }
+  }
+  std::cerr << "NC AMR boundary summary [" << label << "]: NBE=" << mesh.GetNBE()
+            << ", exterior=" << exterior << ", interior=" << interior
+            << ", missing=" << missing << std::endl;
+}
 
 // Load the serial mesh from disk.
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
@@ -277,6 +304,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     {
       if (refinement.nonconformal && use_amr)
       {
+        PrintBoundaryAdjacencySummary("single-rank before EnsureNCMesh", *smesh);
         smesh->EnsureNCMesh(true);
       }
       MPI_Comm_free(&node_comm);
@@ -317,6 +345,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       }
       if (refinement.nonconformal && use_amr)
       {
+        PrintBoundaryAdjacencySummary("node-local before EnsureNCMesh", *smesh);
         smesh->EnsureNCMesh(true);
       }
       if (!partitioning)
