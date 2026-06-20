@@ -768,6 +768,16 @@ LumpedPortData::GetModeCoefficient(std::size_t elem_idx, double coeff) const
 void AssemblePortModeLinearForm(const LumpedPortData &data,
                                 mfem::ParFiniteElementSpace &nd_fespace, Vector &mode)
 {
+  if (data.HasTerminalEdges())
+  {
+    mode.SetSize(nd_fespace.GetVSize());
+    mode = 0.0;
+    data.AddTerminalEdgeVoltageFunctional(nd_fespace, mode, 1.0 / std::sqrt(data.R));
+    mode.UseDevice(true);
+    Mpi::Print("\nUsing terminal voltage functional for lumped port damping.\n");
+    return;
+  }
+
   const auto &mesh = *nd_fespace.GetParMesh();
   SumVectorCoefficient fb(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
