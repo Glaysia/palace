@@ -869,6 +869,15 @@ LumpedPortData::GetModeCoefficient(std::size_t elem_idx, double coeff) const
 void AssemblePortModeLinearForm(const LumpedPortData &data,
                                 mfem::ParFiniteElementSpace &nd_fespace, Vector &mode)
 {
+  if (data.HasTerminalEdges())
+  {
+    mode.SetSize(nd_fespace.GetVSize());
+    mode = 0.0;
+    data.AddTerminalEdgeVoltageFunctional(nd_fespace, mode, 1.0 / std::sqrt(data.R));
+    mode.UseDevice(true);
+    return;
+  }
+
   const auto &mesh = *nd_fespace.GetParMesh();
   SumVectorCoefficient fb(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
@@ -1117,14 +1126,7 @@ std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
   // Compute port S-parameter, or the projection of the field onto the port mode.
   if (HasTerminalEdges())
   {
-    InitializeLinearForms(*E.ParFESpace());
-    std::complex<double> dot((*s) * E.Real(), 0.0);
-    if (E.HasImag())
-    {
-      dot.imag((*s) * E.Imag());
-    }
-    Mpi::GlobalSum(1, &dot, E.GetComm());
-    return dot;
+    return GetVoltage(E) / std::sqrt(R);
   }
   InitializeLinearForms(*E.ParFESpace());
   std::complex<double> dot((*s) * E.Real(), 0.0);
@@ -1518,6 +1520,10 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
+    if (data.HasTerminalEdges())
+    {
+      continue;
+    }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited lumped port!");
     for (std::size_t elem_idx = 0; elem_idx < data.elems.size(); elem_idx++)
@@ -1537,7 +1543,13 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
 
 bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
 {
-  (void)excitation_idx;
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.excitation == excitation_idx && data.HasTerminalEdges())
+    {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1554,7 +1566,7 @@ void LumpedPortOperator::AddTerminalEdgeExcitationVector(
     }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited terminal edge lumped port!");
-    data.AddTerminalEdgeExcitationFunctional(nd_fespace, lf, 2.0 / std::sqrt(data.R));
+    data.AddTerminalEdgeVoltageFunctional(nd_fespace, lf, 2.0 / std::sqrt(data.R));
   }
   lf.UseDevice(true);
   nd_fespace.GetProlongationMatrix()->AddMultTranspose(lf, rhs);
