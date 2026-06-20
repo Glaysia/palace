@@ -5,10 +5,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
+#include <unordered_map>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
+#include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -186,7 +190,220 @@ double IntegrateTerminalEdgeChain(const LumpedPortData::TerminalEdgeChain &chain
   return value;
 }
 
+bool VertexOnTerminalEdge(const Point &x, const TerminalEdge &edge)
+{
+  constexpr double distance_tol = 1.0e-8;
+  constexpr double coordinate_tol = 1.0e-8;
+  const auto [t, distance] = SegmentCoordinateAndDistance(x, edge);
+  return distance <= distance_tol && t >= -coordinate_tol && t <= 1.0 + coordinate_tol;
+}
+
+class TerminalSheetModeCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const mfem::ParGridFunction &potential;
+  const mfem::ParSubMesh &submesh;
+  const std::unordered_map<int, int> &submesh_parent_elems;
+  mfem::IsoparametricTransformation T_loc;
+  double scaling;
+
+public:
+  TerminalSheetModeCoefficient(const mfem::ParGridFunction &potential,
+                               const mfem::ParSubMesh &submesh,
+                               const std::unordered_map<int, int> &submesh_parent_elems,
+                               double scaling = 1.0)
+    : mfem::VectorCoefficient(submesh.SpaceDimension()), potential(potential),
+      submesh(submesh), submesh_parent_elems(submesh_parent_elems), scaling(scaling)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    mfem::ElementTransformation *T_submesh = nullptr;
+    if (T.mesh == submesh.GetParent())
+    {
+      MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::BDR_ELEMENT,
+                  "TerminalSheetModeCoefficient requires ElementType::BDR_ELEMENT when "
+                  "not used on a SubMesh!");
+      auto it = submesh_parent_elems.find(T.ElementNo);
+      if (it == submesh_parent_elems.end())
+      {
+        V.SetSize(vdim);
+        V = 0.0;
+        return;
+      }
+      submesh.GetElementTransformation(it->second, &T_loc);
+      T_loc.SetIntPoint(&ip);
+      T_submesh = &T_loc;
+    }
+    else if (T.mesh == &submesh)
+    {
+      MFEM_ASSERT(T.ElementType == mfem::ElementTransformation::ELEMENT,
+                  "TerminalSheetModeCoefficient requires ElementType::ELEMENT when used "
+                  "on a SubMesh!");
+      T_submesh = &T;
+    }
+    else
+    {
+      MFEM_ABORT("Invalid mesh for TerminalSheetModeCoefficient!");
+    }
+
+    potential.GetGradient(*T_submesh, V);
+    V *= -scaling;
+  }
+};
+
 }  // namespace
+
+struct LumpedPortData::TerminalSheetMode
+{
+  mfem::Array<int> attr_list;
+  std::unique_ptr<Mesh> port_mesh;
+  std::unique_ptr<mfem::FiniteElementCollection> port_h1_fec;
+  std::unique_ptr<FiniteElementSpace> port_h1_fespace;
+  std::unique_ptr<mfem::ParGridFunction> potential;
+  std::unordered_map<int, int> submesh_parent_elems;
+  double norm_sq = 0.0;
+
+  TerminalSheetMode(const mfem::Array<int> &attrs,
+                    const std::array<TerminalEdge, 2> &terminals, const mfem::ParMesh &mesh)
+  {
+    attr_list.Append(attrs);
+    port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+        mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
+    port_h1_fec = std::make_unique<mfem::H1_FECollection>(1, port_mesh->Dimension());
+    port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
+    potential = std::make_unique<mfem::ParGridFunction>(&port_h1_fespace->Get());
+
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    const mfem::Array<int> &parent_elems = port_submesh.GetParentElementIDMap();
+    for (int i = 0; i < parent_elems.Size(); i++)
+    {
+      submesh_parent_elems[parent_elems[i]] = i;
+    }
+
+    SolvePotential(terminals);
+    norm_sq = ComputeNormSq();
+    MFEM_VERIFY(norm_sq > 0.0, "Terminal sheet mode produced zero electric-field norm!");
+  }
+
+  void SolvePotential(const std::array<TerminalEdge, 2> &terminals)
+  {
+    auto &fespace = port_h1_fespace->Get();
+    const auto &mesh = *fespace.GetParMesh();
+    MFEM_VERIFY(fespace.GetMaxElementOrder() == 1,
+                "Terminal sheet mode currently requires first-order H1 elements!");
+    *potential = 0.0;
+
+    mfem::Array<int> dofs;
+    std::set<int> ess_tdofs;
+    int local_signal_vertices = 0, local_reference_vertices = 0;
+    for (int v = 0; v < mesh.GetNV(); v++)
+    {
+      const auto point = GetVertexPoint(mesh, v);
+      const bool on_signal = VertexOnTerminalEdge(point, terminals[0]);
+      const bool on_reference = VertexOnTerminalEdge(point, terminals[1]);
+      MFEM_VERIFY(!(on_signal && on_reference),
+                  "\"TerminalEdges\" signal and reference chains overlap on the port "
+                  "sheet!");
+      if (!on_signal && !on_reference)
+      {
+        continue;
+      }
+      local_signal_vertices += on_signal ? 1 : 0;
+      local_reference_vertices += on_reference ? 1 : 0;
+      const double value = on_signal ? 1.0 : 0.0;
+      fespace.GetVertexDofs(v, dofs);
+      for (int i = 0; i < dofs.Size(); i++)
+      {
+        double sign = 1.0;
+        const int ldof = mfem::FiniteElementSpace::DecodeDof(dofs[i], sign);
+        (*potential)(ldof) = sign * value;
+        const int ltdof = fespace.GetLocalTDofNumber(ldof);
+        if (ltdof >= 0)
+        {
+          ess_tdofs.insert(ltdof);
+        }
+      }
+    }
+
+    int global_counts[2] = {local_signal_vertices, local_reference_vertices};
+    Mpi::GlobalSum(2, global_counts, mesh.GetComm());
+    MFEM_VERIFY(global_counts[0] > 0 && global_counts[1] > 0,
+                "\"TerminalEdges\" did not map to both signal and reference vertices on "
+                "the port sheet!");
+
+    mfem::Array<int> ess_tdof_list;
+    ess_tdof_list.Reserve(static_cast<int>(ess_tdofs.size()));
+    for (int tdof : ess_tdofs)
+    {
+      ess_tdof_list.Append(tdof);
+    }
+    int local_ess_tdofs = ess_tdof_list.Size();
+    int global_ess_tdofs = local_ess_tdofs;
+    Mpi::GlobalSum(1, &global_ess_tdofs, mesh.GetComm());
+    MFEM_VERIFY(global_ess_tdofs > 0,
+                "\"TerminalEdges\" did not map to owned H1 true DOFs on the port sheet!");
+
+    mfem::ConstantCoefficient one(1.0);
+    mfem::ParBilinearForm a(&fespace);
+    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(one));
+    a.Assemble();
+    a.Finalize();
+
+    mfem::ParLinearForm b(&fespace);
+    b = 0.0;
+
+    mfem::HypreParMatrix A;
+    mfem::Vector X, B;
+    a.FormLinearSystem(ess_tdof_list, *potential, b, A, X, B);
+
+    mfem::CGSolver cg(mesh.GetComm());
+    cg.SetPrintLevel(0);
+    cg.SetRelTol(1.0e-12);
+    cg.SetAbsTol(1.0e-14);
+    cg.SetMaxIter(500);
+    mfem::HypreBoomerAMG amg(A);
+    amg.SetPrintLevel(0);
+    cg.SetPreconditioner(amg);
+    cg.SetOperator(A);
+    cg.Mult(B, X);
+    a.RecoverFEMSolution(X, b, *potential);
+  }
+
+  double ComputeNormSq() const
+  {
+    const auto &mesh = port_mesh->Get();
+    double local_norm = 0.0;
+    mfem::Vector grad(mesh.SpaceDimension());
+    const int order = 2 * port_h1_fespace->GetMaxElementOrder() + 2;
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      auto *T = mesh.GetElementTransformation(i);
+      const mfem::IntegrationRule &ir = mfem::IntRules.Get(T->GetGeometryType(), order);
+      for (int j = 0; j < ir.GetNPoints(); j++)
+      {
+        const mfem::IntegrationPoint &ip = ir.IntPoint(j);
+        T->SetIntPoint(&ip);
+        potential->GetGradient(*T, grad);
+        local_norm += ip.weight * T->Weight() * (grad * grad);
+      }
+    }
+    double global_norm = local_norm;
+    Mpi::GlobalSum(1, &global_norm, mesh.GetComm());
+    return global_norm;
+  }
+
+  std::unique_ptr<mfem::VectorCoefficient> GetCoefficient(double coeff) const
+  {
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    return std::make_unique<RestrictedVectorCoefficient<TerminalSheetModeCoefficient>>(
+        attr_list, *potential, port_submesh, submesh_parent_elems, coeff);
+  }
+};
+
+LumpedPortData::~LumpedPortData() = default;
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
@@ -245,6 +462,14 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
           BuildTerminalVoltageEdges(elem.terminal_edges[0], elem.terminal_edges[1]);
       terminal_voltage_edges.push_back({FindTerminalEdgeChain(mesh, voltage_edges[0]),
                                         FindTerminalEdgeChain(mesh, voltage_edges[1])});
+      terminal_sheet_modes.push_back(std::make_unique<TerminalSheetMode>(
+          attr_list,
+          std::array<TerminalEdge, 2>{elem.terminal_edges[0], elem.terminal_edges[1]},
+          mesh));
+    }
+    else
+    {
+      terminal_sheet_modes.push_back(nullptr);
     }
   }
 
@@ -312,8 +537,47 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                      element_idx + 1, chains[0].edge_count, chains[0].length,
                      chains[1].edge_count, chains[1].length);
     }
+    fmt::format_to(out, "Resolved terminal sheet modes for lumped port:\n");
+    std::size_t terminal_mode_idx = 0;
+    for (std::size_t element_idx = 0; element_idx < terminal_sheet_modes.size();
+         element_idx++)
+    {
+      if (!terminal_sheet_modes[element_idx])
+      {
+        continue;
+      }
+      fmt::format_to(out,
+                     " Element {:d}: ∫|E_1V|² dS = {:.6e}, effective squares = "
+                     "{:.6e}\n",
+                     ++terminal_mode_idx, terminal_sheet_modes[element_idx]->norm_sq,
+                     GetToSquare(*elems[element_idx]));
+    }
     Mpi::Print("{}", fmt::to_string(buffer));
   }
+}
+
+double LumpedPortData::GetToSquare(const LumpedElementData &elem) const
+{
+  for (std::size_t i = 0; i < elems.size(); i++)
+  {
+    if (elems[i].get() == &elem && i < terminal_sheet_modes.size() &&
+        terminal_sheet_modes[i])
+    {
+      return terminal_sheet_modes[i]->norm_sq * elems.size();
+    }
+  }
+  return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
+}
+
+std::unique_ptr<mfem::VectorCoefficient>
+LumpedPortData::GetModeCoefficient(std::size_t elem_idx, double coeff) const
+{
+  MFEM_VERIFY(elem_idx < elems.size(), "Invalid lumped port element index!");
+  if (elem_idx < terminal_sheet_modes.size() && terminal_sheet_modes[elem_idx])
+  {
+    return terminal_sheet_modes[elem_idx]->GetCoefficient(coeff);
+  }
+  return elems[elem_idx]->GetModeCoefficient(coeff);
 }
 
 std::complex<double>
@@ -419,14 +683,19 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
   if (!s)
   {
     SumVectorCoefficient fb(mesh.SpaceDimension());
-    for (const auto &elem : elems)
+    for (std::size_t elem_idx = 0; elem_idx < elems.size(); elem_idx++)
     {
-      const double Rs = R * GetToSquare(*elem);
-      const double Hinc = (std::abs(Rs) > 0.0)
-                              ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                                elem->GetGeometryLength() * elems.size())
-                              : 0.0;
-      fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+      const auto &elem = *elems[elem_idx];
+      const double Rs = R * GetToSquare(elem);
+      const bool terminal_mode =
+          elem_idx < terminal_sheet_modes.size() && terminal_sheet_modes[elem_idx];
+      const double Hinc =
+          (std::abs(Rs) > 0.0)
+              ? (terminal_mode ? std::sqrt(R) / Rs
+                               : 1.0 / std::sqrt(Rs * elem.GetGeometryWidth() *
+                                                 elem.GetGeometryLength() * elems.size()))
+              : 0.0;
+      fb.AddCoefficient(GetModeCoefficient(elem_idx, Hinc));
     }
     s = std::make_unique<mfem::LinearForm>(&nd_fespace);
     s->AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb), attr_marker);
@@ -525,9 +794,14 @@ std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
   // Compute port S-parameter, or the projection of the field onto the port mode.
   if (HasTerminalEdges())
   {
-    MFEM_VERIFY(std::abs(R) > 0.0,
-                "Terminal edge S-parameter requested for a port with zero resistance!");
-    return GetVoltage(E) / std::sqrt(R);
+    InitializeLinearForms(*E.ParFESpace());
+    std::complex<double> dot((*s) * E.Real(), 0.0);
+    if (E.HasImag())
+    {
+      dot.imag((*s) * E.Imag());
+    }
+    Mpi::GlobalSum(1, &dot, E.GetComm());
+    return dot;
   }
   InitializeLinearForms(*E.ParFESpace());
   std::complex<double> dot((*s) * E.Real(), 0.0);
@@ -894,12 +1168,17 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited lumped port!");
-    for (const auto &elem : data.elems)
+    for (std::size_t elem_idx = 0; elem_idx < data.elems.size(); elem_idx++)
     {
-      const double Rs = data.R * data.GetToSquare(*elem);
-      const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
-                                          elem->GetGeometryLength() * data.elems.size());
-      fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
+      const auto &elem = *data.elems[elem_idx];
+      const double Rs = data.R * data.GetToSquare(elem);
+      const bool terminal_mode = elem_idx < data.terminal_sheet_modes.size() &&
+                                 data.terminal_sheet_modes[elem_idx];
+      const double Hinc =
+          terminal_mode ? std::sqrt(data.R) / Rs
+                        : 1.0 / std::sqrt(Rs * elem.GetGeometryWidth() *
+                                          elem.GetGeometryLength() * data.elems.size());
+      fb.AddCoefficient(data.GetModeCoefficient(elem_idx, 2.0 * Hinc));
     }
   }
 }

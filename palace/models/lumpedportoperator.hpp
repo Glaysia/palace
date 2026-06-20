@@ -38,6 +38,7 @@ class LumpedPortData
 public:
   using Point = std::array<double, 3>;
   using TerminalEdge = std::array<Point, 2>;
+  struct TerminalSheetMode;
 
   struct TerminalEdgeChain
   {
@@ -63,6 +64,7 @@ public:
   // Optional HFSS-style terminal edge chains for this lumped port.
   std::vector<std::array<TerminalEdgeChain, 2>> terminal_edges;
   std::vector<std::array<TerminalEdgeChain, 2>> terminal_voltage_edges;
+  std::vector<std::unique_ptr<TerminalSheetMode>> terminal_sheet_modes;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
@@ -73,11 +75,11 @@ protected:
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);
+  ~LumpedPortData();
 
-  double GetToSquare(const LumpedElementData &elem) const
-  {
-    return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
-  }
+  double GetToSquare(const LumpedElementData &elem) const;
+  std::unique_ptr<mfem::VectorCoefficient> GetModeCoefficient(std::size_t elem_idx,
+                                                              double coeff = 1.0) const;
 
   // Normalization of tangential electric field of port corresponding ∫|E|²ds = |Z₀| *
   // ∑(Wₑ/Lₑ). In this function we set the impedance magnitude|Z₀| = 1 in internal units (=
