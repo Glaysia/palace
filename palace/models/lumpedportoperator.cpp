@@ -1229,9 +1229,13 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
 
 bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
 {
-  (void)excitation_idx;
-  // TerminalEdges currently define the HFSS terminal voltage path; excitation stays on the
-  // lumped port sheet so the port mode is not collapsed to a one-dimensional line source.
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.excitation == excitation_idx && data.HasTerminalEdges())
+    {
+      return true;
+    }
+  }
   return false;
 }
 
