@@ -892,10 +892,6 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
-    if (data.HasTerminalEdges())
-    {
-      continue;
-    }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited lumped port!");
     for (const auto &elem : data.elems)
@@ -910,13 +906,9 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
 
 bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
 {
-  for (const auto &[idx, data] : ports)
-  {
-    if (data.excitation == excitation_idx && data.HasTerminalEdges())
-    {
-      return true;
-    }
-  }
+  (void)excitation_idx;
+  // TerminalEdges currently define the HFSS terminal voltage path; excitation stays on the
+  // lumped port sheet so the port mode is not collapsed to a one-dimensional line source.
   return false;
 }
 
