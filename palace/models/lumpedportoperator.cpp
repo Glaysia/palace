@@ -135,6 +135,18 @@ LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mes
   return chain;
 }
 
+std::array<TerminalEdge, 2> BuildTerminalVoltageEdges(const TerminalEdge &first,
+                                                      const TerminalEdge &second)
+{
+  const double direct = Distance(first[0], second[0]) + Distance(first[1], second[1]);
+  const double crossed = Distance(first[0], second[1]) + Distance(first[1], second[0]);
+  if (direct <= crossed)
+  {
+    return {TerminalEdge{first[0], second[0]}, TerminalEdge{first[1], second[1]}};
+  }
+  return {TerminalEdge{first[0], second[1]}, TerminalEdge{first[1], second[0]}};
+}
+
 void AddTerminalEdgeChainFunctional(const LumpedPortData::TerminalEdgeChain &chain,
                                     const mfem::ParFiniteElementSpace &nd_fespace,
                                     mfem::Vector &lf, double coeff)
@@ -233,6 +245,10 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
       terminal_edges.push_back(
           {FindTerminalEdgeChain(mesh, elem.terminal_edges[0]),
            FindTerminalEdgeChain(mesh, elem.terminal_edges[1])});
+      const auto voltage_edges =
+          BuildTerminalVoltageEdges(elem.terminal_edges[0], elem.terminal_edges[1]);
+      terminal_voltage_edges.push_back({FindTerminalEdgeChain(mesh, voltage_edges[0]),
+                                        FindTerminalEdgeChain(mesh, voltage_edges[1])});
     }
   }
 
@@ -286,6 +302,17 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
       fmt::format_to(out,
                      " Element {:d}: signal edges = {:d} (length {:.6e}), reference "
                      "edges = {:d} (length {:.6e})\n",
+                     element_idx + 1, chains[0].edge_count, chains[0].length,
+                     chains[1].edge_count, chains[1].length);
+    }
+    fmt::format_to(out, "Resolved terminal voltage edge chains for lumped port:\n");
+    for (std::size_t element_idx = 0; element_idx < terminal_voltage_edges.size();
+         element_idx++)
+    {
+      const auto &chains = terminal_voltage_edges[element_idx];
+      fmt::format_to(out,
+                     " Element {:d}: voltage path A edges = {:d} (length {:.6e}), "
+                     "voltage path B edges = {:d} (length {:.6e})\n",
                      element_idx + 1, chains[0].edge_count, chains[0].length,
                      chains[1].edge_count, chains[1].length);
     }
@@ -355,8 +382,8 @@ void LumpedPortData::AddTerminalEdgeVoltageFunctional(
 {
   MFEM_VERIFY(HasTerminalEdges(),
               "Terminal edge voltage functional requested for a non-terminal port!");
-  const double weight = 1.0 / (2.0 * static_cast<double>(terminal_edges.size()));
-  for (const auto &edge_pair : terminal_edges)
+  const double weight = 1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
+  for (const auto &edge_pair : terminal_voltage_edges)
   {
     AddTerminalEdgeChainFunctional(edge_pair[0], nd_fespace, lf, coeff * weight);
     AddTerminalEdgeChainFunctional(edge_pair[1], nd_fespace, lf, coeff * weight);
@@ -508,9 +535,10 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   // Compute the average voltage across the port.
   if (HasTerminalEdges())
   {
-    const double weight = 1.0 / (2.0 * static_cast<double>(terminal_edges.size()));
+    const double weight =
+        1.0 / (2.0 * static_cast<double>(terminal_voltage_edges.size()));
     std::complex<double> dot = 0.0;
-    for (const auto &edge_pair : terminal_edges)
+    for (const auto &edge_pair : terminal_voltage_edges)
     {
       dot.real(dot.real() + weight * IntegrateTerminalEdgeChain(edge_pair[0], E.Real()));
       dot.real(dot.real() + weight * IntegrateTerminalEdgeChain(edge_pair[1], E.Real()));

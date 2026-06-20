@@ -62,6 +62,7 @@ public:
 
   // Optional HFSS-style terminal edge chains for this lumped port.
   std::vector<std::array<TerminalEdgeChain, 2>> terminal_edges;
+  std::vector<std::array<TerminalEdgeChain, 2>> terminal_voltage_edges;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
