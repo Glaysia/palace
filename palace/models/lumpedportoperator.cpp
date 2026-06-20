@@ -374,7 +374,7 @@ struct LumpedPortData::TerminalSheetMode
 
   double ComputeNormSq()
   {
-    const auto &mesh = port_mesh->Get();
+    auto &mesh = port_mesh->Get();
     double local_norm = 0.0;
     mfem::Vector grad(mesh.SpaceDimension());
     const int order = 2 * port_h1_fespace->GetMaxElementOrder() + 2;
