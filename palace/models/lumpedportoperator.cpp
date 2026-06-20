@@ -543,10 +543,25 @@ struct LumpedPortData::TerminalSheetMode
 
     mfem::Array<int> dofs;
     mfem::Array<int> vertices;
-    std::unordered_set<int> boundary_vertices;
-    for (int be = 0; be < mesh.GetNBE(); be++)
+    mfem::Array<int> edges;
+    mfem::Array<int> orientations;
+    std::unordered_map<int, int> selected_edge_counts;
+    for (int elem : selected_submesh_elems)
     {
-      mesh.GetBdrElementVertices(be, vertices);
+      mesh.GetElementEdges(elem, edges, orientations);
+      for (int i = 0; i < edges.Size(); i++)
+      {
+        selected_edge_counts[edges[i]]++;
+      }
+    }
+    std::unordered_set<int> boundary_vertices;
+    for (const auto &[edge, count] : selected_edge_counts)
+    {
+      if (count != 1)
+      {
+        continue;
+      }
+      mesh.GetEdgeVertices(edge, vertices);
       for (int i = 0; i < vertices.Size(); i++)
       {
         boundary_vertices.insert(vertices[i]);
