@@ -265,6 +265,9 @@ struct LumpedPortData::TerminalSheetMode
   std::unique_ptr<mfem::ParGridFunction> potential;
   std::unordered_map<int, int> submesh_parent_elems;
   double norm_sq = 0.0;
+  int global_signal_vertices = 0;
+  int global_reference_vertices = 0;
+  int global_ess_tdofs = 0;
 
   TerminalSheetMode(const mfem::Array<int> &attrs,
                     const std::array<TerminalEdge, 2> &terminals, const mfem::ParMesh &mesh)
@@ -285,6 +288,13 @@ struct LumpedPortData::TerminalSheetMode
 
     SolvePotential(terminals);
     norm_sq = ComputeNormSq();
+    const auto [phi_min, phi_max] = ComputePotentialRange();
+    Mpi::Print("\nTerminal sheet mode diagnostics:"
+               " elements = {:d}, vertices = {:d}, signal vertices = {:d}, reference "
+               "vertices = {:d}, essential true DOFs = {:d}, phi = [{:.6e}, {:.6e}], "
+               "∫|E_1V|² dS = {:.6e}\n",
+               port_mesh->GetNE(), port_mesh->Get().GetNV(), global_signal_vertices,
+               global_reference_vertices, global_ess_tdofs, phi_min, phi_max, norm_sq);
     MFEM_VERIFY(norm_sq > 0.0, "Terminal sheet mode produced zero electric-field norm!");
   }
 
@@ -330,6 +340,8 @@ struct LumpedPortData::TerminalSheetMode
 
     int global_counts[2] = {local_signal_vertices, local_reference_vertices};
     Mpi::GlobalSum(2, global_counts, mesh.GetComm());
+    global_signal_vertices = global_counts[0];
+    global_reference_vertices = global_counts[1];
     MFEM_VERIFY(global_counts[0] > 0 && global_counts[1] > 0,
                 "\"TerminalEdges\" did not map to both signal and reference vertices on "
                 "the port sheet!");
@@ -341,7 +353,7 @@ struct LumpedPortData::TerminalSheetMode
       ess_tdof_list.Append(tdof);
     }
     int local_ess_tdofs = ess_tdof_list.Size();
-    int global_ess_tdofs = local_ess_tdofs;
+    global_ess_tdofs = local_ess_tdofs;
     Mpi::GlobalSum(1, &global_ess_tdofs, mesh.GetComm());
     MFEM_VERIFY(global_ess_tdofs > 0,
                 "\"TerminalEdges\" did not map to owned H1 true DOFs on the port sheet!");
@@ -393,6 +405,21 @@ struct LumpedPortData::TerminalSheetMode
     double global_norm = local_norm;
     Mpi::GlobalSum(1, &global_norm, mesh.GetComm());
     return global_norm;
+  }
+
+  std::pair<double, double> ComputePotentialRange() const
+  {
+    double phi_min = mfem::infinity();
+    double phi_max = -mfem::infinity();
+    const double *values = potential->HostRead();
+    for (int i = 0; i < potential->Size(); i++)
+    {
+      phi_min = std::min(phi_min, values[i]);
+      phi_max = std::max(phi_max, values[i]);
+    }
+    Mpi::GlobalMin(1, &phi_min, potential->ParFESpace()->GetComm());
+    Mpi::GlobalMax(1, &phi_max, potential->ParFESpace()->GetComm());
+    return {phi_min, phi_max};
   }
 
   std::unique_ptr<mfem::VectorCoefficient> GetCoefficient(double coeff) const
