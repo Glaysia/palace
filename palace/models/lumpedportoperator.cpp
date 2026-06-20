@@ -308,6 +308,7 @@ struct LumpedPortData::TerminalSheetMode
 
     mfem::Array<int> dofs;
     std::set<int> ess_tdofs;
+    std::set<int> signal_tdofs;
     int local_signal_vertices = 0, local_reference_vertices = 0;
     for (int v = 0; v < mesh.GetNV(); v++)
     {
@@ -334,6 +335,10 @@ struct LumpedPortData::TerminalSheetMode
         if (ltdof >= 0)
         {
           ess_tdofs.insert(ltdof);
+          if (on_signal)
+          {
+            signal_tdofs.insert(ltdof);
+          }
         }
       }
     }
@@ -357,6 +362,18 @@ struct LumpedPortData::TerminalSheetMode
     Mpi::GlobalSum(1, &global_ess_tdofs, mesh.GetComm());
     MFEM_VERIFY(global_ess_tdofs > 0,
                 "\"TerminalEdges\" did not map to owned H1 true DOFs on the port sheet!");
+
+    mfem::Vector true_potential(fespace.GetTrueVSize());
+    true_potential.UseDevice(true);
+    true_potential = 0.0;
+    {
+      double *values = true_potential.HostReadWrite();
+      for (int tdof : signal_tdofs)
+      {
+        values[tdof] = 1.0;
+      }
+    }
+    potential->SetFromTrueDofs(true_potential);
 
     mfem::ConstantCoefficient one(1.0);
     mfem::ParBilinearForm a(&fespace);
