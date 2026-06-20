@@ -114,13 +114,9 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   const bool use_mesh_partitioner = [&]()
   {
     // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
-    // might be reused for nonadaptive simulations. An initially conforming mesh can still
-    // use the mesh partitioner even when nonconformal AMR is requested; we convert the
-    // distributed ParMesh to an NCMesh below. This avoids the serial print/re-read path,
-    // which does not tolerate Palace's generated internal boundary elements on some
-    // tetrahedral meshes.
+    // might be reused for nonadaptive simulations.
     BlockTimer bt(Timer::IO);
-    bool use_mesh_partitioner = true;
+    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
     if (Mpi::Root(comm))
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
@@ -274,55 +270,64 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   if (use_mesh_partitioner)
   {
     pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
-    if (refinement.nonconformal && use_amr)
-    {
-      pmesh->EnsureNCMesh(true);
-    }
   }
   else
   {
-    // Send the preprocessed serial mesh and partitioning as a byte string.
-    constexpr bool generate_edges = false, refine = true, fix_orientation = false;
-    std::string so;
-    int slen = 0;
-    if (smesh)
+    if (Mpi::Size(comm) == 1 && smesh)
     {
-      std::ostringstream fo(std::stringstream::out);
-      // fo << std::fixed;
-      fo << std::scientific;
-      fo.precision(MSH_FLT_PRECISION);
-      smesh->Print(fo);
-      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency with
-                      // the saved serial mesh (refinement marking, for example)
-      so = fo.str();
-      // so = zlib::CompressString(fo.str());
-      slen = static_cast<int>(so.size());
-      MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
+      if (refinement.nonconformal && use_amr)
+      {
+        smesh->EnsureNCMesh(true);
+      }
+      MPI_Comm_free(&node_comm);
+      pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+      smesh.reset();
     }
-    Mpi::Broadcast(1, &slen, 0, node_comm);
-    if (so.empty())
+    else
     {
-      so.resize(slen);
+      // Send the preprocessed serial mesh and partitioning as a byte string.
+      constexpr bool generate_edges = false, refine = true, fix_orientation = false;
+      std::string so;
+      int slen = 0;
+      if (smesh)
+      {
+        std::ostringstream fo(std::stringstream::out);
+        // fo << std::fixed;
+        fo << std::scientific;
+        fo.precision(MSH_FLT_PRECISION);
+        smesh->Print(fo);
+        smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency with
+                        // the saved serial mesh (refinement marking, for example)
+        so = fo.str();
+        // so = zlib::CompressString(fo.str());
+        slen = static_cast<int>(so.size());
+        MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
+      }
+      Mpi::Broadcast(1, &slen, 0, node_comm);
+      if (so.empty())
+      {
+        so.resize(slen);
+      }
+      Mpi::Broadcast(slen, so.data(), 0, node_comm);
+      {
+        std::istringstream fi(so);
+        // std::istringstream fi(zlib::DecompressString(so));
+        smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+        so.clear();
+      }
+      if (refinement.nonconformal && use_amr)
+      {
+        smesh->EnsureNCMesh(true);
+      }
+      if (!partitioning)
+      {
+        partitioning = std::make_unique<int[]>(smesh->GetNE());
+      }
+      Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
+      MPI_Comm_free(&node_comm);
+      pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+      smesh.reset();
     }
-    Mpi::Broadcast(slen, so.data(), 0, node_comm);
-    {
-      std::istringstream fi(so);
-      // std::istringstream fi(zlib::DecompressString(so));
-      smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
-      so.clear();
-    }
-    if (refinement.nonconformal && use_amr)
-    {
-      smesh->EnsureNCMesh(true);
-    }
-    if (!partitioning)
-    {
-      partitioning = std::make_unique<int[]>(smesh->GetNE());
-    }
-    Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
-    MPI_Comm_free(&node_comm);
-    pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
-    smesh.reset();
   }
 
   if constexpr (false)
