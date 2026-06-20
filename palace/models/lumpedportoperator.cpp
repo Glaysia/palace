@@ -3,6 +3,8 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
@@ -16,6 +18,118 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+namespace
+{
+
+using Point = LumpedPortData::Point;
+using TerminalEdge = LumpedPortData::TerminalEdge;
+
+Point GetVertexPoint(const mfem::ParMesh &mesh, int vertex)
+{
+  const auto *x = mesh.GetVertex(vertex);
+  return {x[0], x[1], x[2]};
+}
+
+Point Subtract(const Point &a, const Point &b)
+{
+  return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+}
+
+double Dot(const Point &a, const Point &b)
+{
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+double Norm(const Point &a)
+{
+  return std::sqrt(Dot(a, a));
+}
+
+double Distance(const Point &a, const Point &b)
+{
+  return Norm(Subtract(a, b));
+}
+
+std::pair<double, double> SegmentCoordinateAndDistance(const Point &x,
+                                                       const TerminalEdge &edge)
+{
+  const auto ab = Subtract(edge[1], edge[0]);
+  const auto ax = Subtract(x, edge[0]);
+  const double length2 = Dot(ab, ab);
+  MFEM_VERIFY(length2 > 0.0, "\"TerminalEdges\" entry has coincident endpoints!");
+  const double t = Dot(ax, ab) / length2;
+  const Point projected{edge[0][0] + t * ab[0], edge[0][1] + t * ab[1],
+                        edge[0][2] + t * ab[2]};
+  return {t, Distance(x, projected)};
+}
+
+LumpedPortData::TerminalEdgeChain FindTerminalEdgeChain(const mfem::ParMesh &mesh,
+                                                        const TerminalEdge &edge)
+{
+  constexpr double distance_tol = 1.0e-8;
+  constexpr double coordinate_tol = 1.0e-8;
+  struct Candidate
+  {
+    int edge;
+    double t_min;
+    double t_max;
+    double length;
+  };
+  std::vector<Candidate> candidates;
+  mfem::Array<int> vertices;
+  for (int edge_idx = 0; edge_idx < mesh.GetNEdges(); edge_idx++)
+  {
+    mesh.GetEdgeVertices(edge_idx, vertices);
+    MFEM_VERIFY(vertices.Size() == 2, "Expected mesh edge to have two vertices!");
+    const auto first = GetVertexPoint(mesh, vertices[0]);
+    const auto second = GetVertexPoint(mesh, vertices[1]);
+    const auto [t0, d0] = SegmentCoordinateAndDistance(first, edge);
+    const auto [t1, d1] = SegmentCoordinateAndDistance(second, edge);
+    if (d0 > distance_tol || d1 > distance_tol)
+    {
+      continue;
+    }
+    const double t_min = std::min(t0, t1);
+    const double t_max = std::max(t0, t1);
+    if (t_min < -coordinate_tol || t_max > 1.0 + coordinate_tol)
+    {
+      continue;
+    }
+    candidates.push_back(
+        Candidate{edge_idx, std::max(0.0, t_min), std::min(1.0, t_max),
+                  Distance(first, second)});
+  }
+  std::sort(candidates.begin(), candidates.end(),
+            [](const auto &a, const auto &b) { return a.t_min < b.t_min; });
+
+  int local_count = static_cast<int>(candidates.size());
+  int global_count = local_count;
+  Mpi::GlobalSum(1, &global_count, mesh.GetComm());
+  MFEM_VERIFY(global_count > 0,
+              "\"TerminalEdges\" entry did not match any mesh edge chain!");
+
+  double local_length = 0.0;
+  for (const auto &candidate : candidates)
+  {
+    local_length += candidate.length;
+  }
+  double global_length = local_length;
+  Mpi::GlobalSum(1, &global_length, mesh.GetComm());
+
+  LumpedPortData::TerminalEdgeChain chain;
+  chain.endpoints = edge;
+  chain.edge_count = global_count;
+  chain.length = global_length;
+  chain.mesh_edges.reserve(candidates.size());
+  for (const auto &candidate : candidates)
+  {
+    chain.mesh_edges.push_back(candidate.edge);
+  }
+  return chain;
+}
+
+}  // namespace
 
 LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
@@ -65,6 +179,14 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                                  elem.length, elem.width));
         break;
     }
+    if (!elem.terminal_edges.empty())
+    {
+      MFEM_VERIFY(elem.terminal_edges.size() == 2,
+                  "\"TerminalEdges\" must contain exactly two endpoint pairs!");
+      terminal_edges.push_back(
+          {FindTerminalEdgeChain(mesh, elem.terminal_edges[0]),
+           FindTerminalEdgeChain(mesh, elem.terminal_edges[1])});
+    }
   }
 
   // Populate the property data for the lumped port.
@@ -104,6 +226,23 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     {
       L = 1.0 / ooL;
     }
+  }
+
+  if (HasTerminalEdges())
+  {
+    fmt::memory_buffer buffer{};
+    auto out = fmt::appender{buffer};
+    fmt::format_to(out, "\nResolved HFSS-style terminal edge chains for lumped port:\n");
+    for (std::size_t element_idx = 0; element_idx < terminal_edges.size(); element_idx++)
+    {
+      const auto &chains = terminal_edges[element_idx];
+      fmt::format_to(out,
+                     " Element {:d}: signal edges = {:d} (length {:.6e}), reference "
+                     "edges = {:d} (length {:.6e})\n",
+                     element_idx + 1, chains[0].edge_count, chains[0].length,
+                     chains[1].edge_count, chains[1].length);
+    }
+    Mpi::Print("{}", fmt::to_string(buffer));
   }
 }
 

@@ -269,6 +269,12 @@ void ParseElementData(const json &elem, bool required, internal::ElementData &da
   std::sort(data.attributes.begin(), data.attributes.end());
   data.length = elem.value("Length", data.length);
   data.width = elem.value("Width", data.width);
+  if (auto terminal_edges = elem.find("TerminalEdges"); terminal_edges != elem.end())
+  {
+    data.terminal_edges = terminal_edges->get<std::vector<internal::ElementData::Edge>>();
+    MFEM_VERIFY(data.terminal_edges.size() == 2,
+                "\"TerminalEdges\" must contain exactly two endpoint pairs!");
+  }
   MFEM_VERIFY((data.length == 0.0 && data.width == 0.0) ||
                   (data.length > 0.0 && data.width > 0.0),
               "\"Length\" and \"Width\" must either both be positive or both be "

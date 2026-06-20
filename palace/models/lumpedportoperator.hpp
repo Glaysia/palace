@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_LUMPED_PORT_OPERATOR_HPP
 #define PALACE_MODELS_LUMPED_PORT_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <map>
 #include <memory>
@@ -34,6 +35,17 @@ struct LumpedPortData;
 class LumpedPortData
 {
 public:
+  using Point = std::array<double, 3>;
+  using TerminalEdge = std::array<Point, 2>;
+
+  struct TerminalEdgeChain
+  {
+    TerminalEdge endpoints;
+    std::vector<int> mesh_edges;
+    int edge_count = 0;
+    double length = 0.0;
+  };
+
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
@@ -45,6 +57,9 @@ public:
   double R, L, C;
   int excitation;
   bool active;
+
+  // Optional HFSS-style terminal edge chains for this lumped port.
+  std::vector<std::array<TerminalEdgeChain, 2>> terminal_edges;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
@@ -89,6 +104,7 @@ public:
   }
 
   constexpr bool HasExcitation() const { return excitation != 0; }
+  bool HasTerminalEdges() const { return !terminal_edges.empty(); }
 
   enum class Branch
   {

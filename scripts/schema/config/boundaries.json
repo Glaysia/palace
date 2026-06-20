@@ -99,6 +99,7 @@
           "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
           "Length": { "type": "number", "exclusiveMinimum": 0 },
           "Width": { "type": "number", "exclusiveMinimum": 0 },
+          "TerminalEdges": { "$ref": "#/$defs/TerminalEdges" },
           "R": { "type": "number" },
           "L": { "type": "number" },
           "C": { "type": "number" },
@@ -127,7 +128,8 @@
                 "Direction": { "$ref": "#/$defs/Direction" },
                 "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
                 "Length": { "type": "number", "exclusiveMinimum": 0 },
-                "Width": { "type": "number", "exclusiveMinimum": 0 }
+                "Width": { "type": "number", "exclusiveMinimum": 0 },
+                "TerminalEdges": { "$ref": "#/$defs/TerminalEdges" }
               }
             }
           }
@@ -404,6 +406,30 @@
       "items": { "type": "number" },
       "minItems": 3,
       "maxItems": 3
+    },
+    "Point3":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "TerminalEdge":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/Point3" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "TerminalEdges":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/TerminalEdge" },
+      "minItems": 2,
+      "maxItems": 2
     },
     "Direction":
     {

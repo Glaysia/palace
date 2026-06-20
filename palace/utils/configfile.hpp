@@ -30,6 +30,9 @@ namespace internal
 // postprocessing objects.
 struct ElementData
 {
+  using Point = std::array<double, 3>;
+  using Edge = std::array<Point, 2>;
+
   // Vector defining the direction for this port. In a Cartesian system, "X", "Y", and "Z"
   // map to (1,0,0), (0,1,0), and (0,0,1), respectively.
   std::array<double, 3> direction{{0.0, 0.0, 0.0}};
@@ -40,6 +43,10 @@ struct ElementData
   // these override bounding-box geometry inference for skewed terminal sheets.
   double length = 0.0;
   double width = 0.0;
+
+  // Optional terminal edge endpoint pairs in mesh length units. For HFSS-style terminal
+  // lumped ports these preserve the two conductor edge chains which define the terminal.
+  std::vector<Edge> terminal_edges = {};
 
   // List of boundary attributes for this element.
   std::vector<int> attributes = {};
