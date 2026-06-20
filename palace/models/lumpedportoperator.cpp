@@ -7,6 +7,7 @@
 #include <cmath>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
@@ -291,6 +292,7 @@ private:
   const mfem::ParGridFunction &potential;
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
+  const std::unordered_set<int> &selected_parent_elems;
   mfem::IsoparametricTransformation T_loc;
   double scaling;
 
@@ -298,9 +300,11 @@ public:
   TerminalSheetModeCoefficient(const mfem::ParGridFunction &potential,
                                const mfem::ParSubMesh &submesh,
                                const std::unordered_map<int, int> &submesh_parent_elems,
+                               const std::unordered_set<int> &selected_parent_elems,
                                double scaling = 1.0)
     : mfem::VectorCoefficient(submesh.SpaceDimension()), potential(potential),
-      submesh(submesh), submesh_parent_elems(submesh_parent_elems), scaling(scaling)
+      submesh(submesh), submesh_parent_elems(submesh_parent_elems),
+      selected_parent_elems(selected_parent_elems), scaling(scaling)
   {
   }
 
@@ -314,7 +318,8 @@ public:
                   "TerminalSheetModeCoefficient requires ElementType::BDR_ELEMENT when "
                   "not used on a SubMesh!");
       auto it = submesh_parent_elems.find(T.ElementNo);
-      if (it == submesh_parent_elems.end())
+      if (it == submesh_parent_elems.end() ||
+          selected_parent_elems.find(T.ElementNo) == selected_parent_elems.end())
       {
         V.SetSize(vdim);
         V = 0.0;
@@ -403,13 +408,19 @@ struct LumpedPortData::TerminalSheetMode
   std::unique_ptr<FiniteElementSpace> port_h1_fespace;
   std::unique_ptr<mfem::ParGridFunction> potential;
   std::unordered_map<int, int> submesh_parent_elems;
+  std::unordered_set<int> selected_parent_elems;
+  std::unordered_set<int> selected_submesh_elems;
   double norm_sq = 0.0;
+  double selected_relative_permittivity = 0.0;
+  int selected_adjacent_attr = 0;
+  int global_selected_elements = 0;
   int global_signal_vertices = 0;
   int global_reference_vertices = 0;
   int global_ess_tdofs = 0;
 
   TerminalSheetMode(const mfem::Array<int> &attrs,
-                    const std::array<TerminalEdge, 2> &terminals, const mfem::ParMesh &mesh)
+                    const std::array<TerminalEdge, 2> &terminals, const mfem::ParMesh &mesh,
+                    const MaterialOperator &mat_op)
   {
     attr_list.Append(attrs);
     port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
@@ -425,16 +436,101 @@ struct LumpedPortData::TerminalSheetMode
       submesh_parent_elems[parent_elems[i]] = i;
     }
 
+    SelectAdjacentSide(mesh, mat_op);
     SolvePotential(terminals);
     norm_sq = ComputeNormSq();
     const auto [phi_min, phi_max] = ComputePotentialRange();
     Mpi::Print("\nTerminal sheet mode diagnostics:"
-               " elements = {:d}, vertices = {:d}, signal vertices = {:d}, reference "
-               "vertices = {:d}, essential true DOFs = {:d}, phi = [{:.6e}, {:.6e}], "
+               " elements = {:d}, selected elements = {:d}, selected adjacent attr = {:d}, "
+               "selected ε_r = {:.6e}, vertices = {:d}, signal vertices = {:d}, "
+               "reference vertices = {:d}, essential true DOFs = {:d}, phi = "
+               "[{:.6e}, {:.6e}], "
                "∫|E_1V|² dS = {:.6e}\n",
-               port_mesh->GetNE(), port_mesh->Get().GetNV(), global_signal_vertices,
-               global_reference_vertices, global_ess_tdofs, phi_min, phi_max, norm_sq);
+               port_mesh->GetNE(), global_selected_elements, selected_adjacent_attr,
+               selected_relative_permittivity, port_mesh->Get().GetNV(),
+               global_signal_vertices, global_reference_vertices, global_ess_tdofs, phi_min,
+               phi_max, norm_sq);
     MFEM_VERIFY(norm_sq > 0.0, "Terminal sheet mode produced zero electric-field norm!");
+  }
+
+  static double RelativePermittivityScalar(const MaterialOperator &mat_op, int attr)
+  {
+    const auto eps = mat_op.GetPermittivityReal(attr);
+    const int n = std::min(eps.Height(), eps.Width());
+    double trace = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      trace += eps(i, i);
+    }
+    return trace / static_cast<double>(n);
+  }
+
+  void SelectAdjacentSide(const mfem::ParMesh &parent_mesh, const MaterialOperator &mat_op)
+  {
+    int domain_attr_max = parent_mesh.attributes.Size() ? parent_mesh.attributes.Max() : 0;
+    Mpi::GlobalMax(1, &domain_attr_max, parent_mesh.GetComm());
+
+    std::vector<long long> adjacent_counts(domain_attr_max + 1, 0);
+    std::vector<double> adjacent_eps(domain_attr_max + 1, mfem::infinity());
+    std::unordered_map<int, int> parent_adjacent_attr;
+    parent_adjacent_attr.reserve(submesh_parent_elems.size());
+
+    for (const auto &[parent_be, submesh_elem] : submesh_parent_elems)
+    {
+      int elem_id = -1, info = 0;
+      parent_mesh.GetBdrElementAdjacentElement(parent_be, elem_id, info);
+      if (elem_id < 0)
+      {
+        continue;
+      }
+      const int domain_attr = parent_mesh.GetAttribute(elem_id);
+      if (domain_attr <= 0 || domain_attr > domain_attr_max)
+      {
+        continue;
+      }
+      parent_adjacent_attr[parent_be] = domain_attr;
+      adjacent_counts[domain_attr]++;
+      adjacent_eps[domain_attr] = std::min(adjacent_eps[domain_attr],
+                                           RelativePermittivityScalar(mat_op, domain_attr));
+    }
+
+    Mpi::GlobalSum(static_cast<int>(adjacent_counts.size()), adjacent_counts.data(),
+                   parent_mesh.GetComm());
+    Mpi::GlobalMin(static_cast<int>(adjacent_eps.size()), adjacent_eps.data(),
+                   parent_mesh.GetComm());
+
+    selected_adjacent_attr = 0;
+    selected_relative_permittivity = mfem::infinity();
+    for (int attr = 1; attr <= domain_attr_max; attr++)
+    {
+      if (adjacent_counts[attr] == 0)
+      {
+        continue;
+      }
+      if (adjacent_eps[attr] < selected_relative_permittivity ||
+          (adjacent_eps[attr] == selected_relative_permittivity &&
+           (selected_adjacent_attr == 0 || attr < selected_adjacent_attr)))
+      {
+        selected_adjacent_attr = attr;
+        selected_relative_permittivity = adjacent_eps[attr];
+      }
+    }
+    MFEM_VERIFY(selected_adjacent_attr > 0,
+                "Terminal sheet mode did not find an adjacent material side!");
+
+    for (const auto &[parent_be, domain_attr] : parent_adjacent_attr)
+    {
+      if (domain_attr != selected_adjacent_attr)
+      {
+        continue;
+      }
+      selected_parent_elems.insert(parent_be);
+      selected_submesh_elems.insert(submesh_parent_elems.at(parent_be));
+    }
+    global_selected_elements = static_cast<int>(selected_parent_elems.size());
+    Mpi::GlobalSum(1, &global_selected_elements, parent_mesh.GetComm());
+    MFEM_VERIFY(global_selected_elements > 0,
+                "Terminal sheet mode adjacent-side selection produced no elements!");
   }
 
   void SolvePotential(const std::array<TerminalEdge, 2> &terminals)
@@ -548,6 +644,10 @@ struct LumpedPortData::TerminalSheetMode
     const int order = 2 * port_h1_fespace->GetMaxElementOrder() + 2;
     for (int i = 0; i < mesh.GetNE(); i++)
     {
+      if (selected_submesh_elems.find(i) == selected_submesh_elems.end())
+      {
+        continue;
+      }
       auto *T = mesh.GetElementTransformation(i);
       const mfem::IntegrationRule &ir = mfem::IntRules.Get(T->GetGeometryType(), order);
       for (int j = 0; j < ir.GetNPoints(); j++)
@@ -582,7 +682,8 @@ struct LumpedPortData::TerminalSheetMode
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     return std::make_unique<RestrictedVectorCoefficient<TerminalSheetModeCoefficient>>(
-        attr_list, *potential, port_submesh, submesh_parent_elems, coeff);
+        attr_list, *potential, port_submesh, submesh_parent_elems, selected_parent_elems,
+        coeff);
   }
 };
 
@@ -649,8 +750,8 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                         FindTerminalEdgeChain(mesh, voltage_edges[1])});
       terminal_sheet_modes.push_back(std::make_unique<TerminalSheetMode>(
           attr_list,
-          std::array<TerminalEdge, 2>{elem.terminal_edges[0], elem.terminal_edges[1]},
-          mesh));
+          std::array<TerminalEdge, 2>{elem.terminal_edges[0], elem.terminal_edges[1]}, mesh,
+          mat_op));
     }
     else
     {
