@@ -720,9 +720,6 @@ struct LumpedPortData::TerminalSheetMode
     cg.SetRelTol(1.0e-12);
     cg.SetAbsTol(1.0e-14);
     cg.SetMaxIter(500);
-    mfem::HypreBoomerAMG amg(A);
-    amg.SetPrintLevel(0);
-    cg.SetPreconditioner(amg);
     cg.SetOperator(A);
     cg.Mult(B, X);
     a.RecoverFEMSolution(X, b, *potential);
