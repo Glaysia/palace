@@ -3,8 +3,11 @@
 
 #include "basesolver.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
+#include <unordered_set>
+#include <vector>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -115,6 +118,92 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
   return ind;
 }
 
+std::vector<int> LumpedPortBoundaryAttributes(const IoData &iodata)
+{
+  std::vector<int> attrs;
+  for (const auto &[idx, port] : iodata.boundaries.lumpedport)
+  {
+    for (const auto &elem : port.elements)
+    {
+      attrs.insert(attrs.end(), elem.attributes.begin(), elem.attributes.end());
+    }
+  }
+  std::sort(attrs.begin(), attrs.end());
+  attrs.erase(std::unique(attrs.begin(), attrs.end()), attrs.end());
+  return attrs;
+}
+
+mfem::Array<int> RemoveProtectedBoundaryAdjacentElements(
+    const mfem::ParMesh &mesh, const mfem::Array<int> &marked_elements,
+    const std::vector<int> &protected_bdr_attrs)
+{
+  if (protected_bdr_attrs.empty() || marked_elements.Size() == 0)
+  {
+    return marked_elements;
+  }
+
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  Mpi::GlobalMax(1, &bdr_attr_max, mesh.GetComm());
+  if (bdr_attr_max == 0)
+  {
+    return marked_elements;
+  }
+
+  mfem::Array<int> protected_bdr_marker(bdr_attr_max);
+  protected_bdr_marker = 0;
+  for (int attr : protected_bdr_attrs)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      protected_bdr_marker[attr - 1] = 1;
+    }
+  }
+
+  std::unordered_set<int> protected_elements;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int bdr_attr = mesh.GetBdrAttribute(be);
+    if (bdr_attr <= 0 || bdr_attr > bdr_attr_max || !protected_bdr_marker[bdr_attr - 1])
+    {
+      continue;
+    }
+    int elem_id = -1, info = 0;
+    mesh.GetBdrElementAdjacentElement(be, elem_id, info);
+    if (elem_id >= 0)
+    {
+      protected_elements.insert(elem_id);
+    }
+  }
+
+  mfem::Array<int> filtered;
+  filtered.Reserve(marked_elements.Size());
+  int local_removed = 0;
+  for (int i = 0; i < marked_elements.Size(); i++)
+  {
+    const int elem_id = marked_elements[i];
+    if (protected_elements.find(elem_id) != protected_elements.end())
+    {
+      local_removed++;
+      continue;
+    }
+    filtered.Append(elem_id);
+  }
+
+  int global_removed = local_removed;
+  int global_marked = marked_elements.Size();
+  int global_filtered = filtered.Size();
+  Mpi::GlobalSum(1, &global_removed, mesh.GetComm());
+  Mpi::GlobalSum(1, &global_marked, mesh.GetComm());
+  Mpi::GlobalSum(1, &global_filtered, mesh.GetComm());
+  if (global_removed > 0)
+  {
+    Mpi::Print(" Protected lumped-port boundary adjacency removed {:d}/{:d} marked "
+               "elements from AMR ({:d} remain)\n",
+               global_removed, global_marked, global_filtered);
+  }
+  return filtered;
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -213,11 +302,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    const auto marked_elements = [&comm, &refinement, &mesh, this](const auto &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
           comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      if (refinement.nonconformal)
+      {
+        marked_elements = RemoveProtectedBoundaryAdjacentElements(
+            *mesh.back(), marked_elements, LumpedPortBoundaryAttributes(iodata));
+      }
       const auto [glob_marked_elements, glob_elements] =
           linalg::GlobalSize2(comm, marked_elements, indicators.Local());
       Mpi::Print(
