@@ -589,8 +589,34 @@ struct LumpedPortData::TerminalSheetMode
 
     mfem::Array<int> signal_tdofs;
     mfem::Array<int> reference_tdofs;
-    fespace.GetRestrictionMatrix()->BooleanMult(signal_dofs, signal_tdofs);
-    fespace.GetRestrictionMatrix()->BooleanMult(reference_dofs, reference_tdofs);
+    const auto *restriction = fespace.GetRestrictionMatrix();
+    restriction->BooleanMult(signal_dofs, signal_tdofs);
+    restriction->BooleanMult(reference_dofs, reference_tdofs);
+
+    int local_signal_dofs = 0, local_reference_dofs = 0;
+    for (int i = 0; i < signal_dofs.Size(); i++)
+    {
+      local_signal_dofs += signal_dofs[i] ? 1 : 0;
+      local_reference_dofs += reference_dofs[i] ? 1 : 0;
+    }
+    int local_signal_tdofs = 0, local_reference_tdofs = 0;
+    for (int i = 0; i < signal_tdofs.Size(); i++)
+    {
+      local_signal_tdofs += signal_tdofs[i] ? 1 : 0;
+      local_reference_tdofs += reference_tdofs[i] ? 1 : 0;
+    }
+    int global_marker_counts[4] = {local_signal_dofs, local_reference_dofs,
+                                   local_signal_tdofs, local_reference_tdofs};
+    Mpi::GlobalSum(4, global_marker_counts, mesh.GetComm());
+    Mpi::Print("\nTerminal sheet true-DOF marker diagnostics:"
+               "\n  vsize = {:d}, ndofs = {:d}, true_vsize = {:d}"
+               "\n  restriction = {:d} x {:d}"
+               "\n  local marker totals: signal_dofs = {:d}, reference_dofs = {:d}, "
+               "signal_tdofs = {:d}, reference_tdofs = {:d}\n",
+               fespace.GetVSize(), fespace.GetNDofs(), fespace.GetTrueVSize(),
+               restriction->Height(), restriction->Width(), global_marker_counts[0],
+               global_marker_counts[1], global_marker_counts[2],
+               global_marker_counts[3]);
 
     std::set<int> ess_tdofs;
     std::set<int> signal_tdof_set;
