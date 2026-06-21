@@ -542,8 +542,10 @@ struct LumpedPortData::TerminalSheetMode
     *potential = 0.0;
 
     mfem::Array<int> dofs;
-    std::set<int> ess_tdofs;
-    std::set<int> signal_tdofs;
+    mfem::Array<int> signal_dofs(fespace.GetVSize());
+    mfem::Array<int> reference_dofs(fespace.GetVSize());
+    signal_dofs = 0;
+    reference_dofs = 0;
     int local_signal_vertices = 0, local_reference_vertices = 0;
     for (int v = 0; v < mesh.GetNV(); v++)
     {
@@ -566,14 +568,13 @@ struct LumpedPortData::TerminalSheetMode
         double sign = 1.0;
         const int ldof = mfem::FiniteElementSpace::DecodeDof(dofs[i], sign);
         (*potential)(ldof) = sign * value;
-        const int ltdof = fespace.GetLocalTDofNumber(ldof);
-        if (ltdof >= 0)
+        if (on_signal)
         {
-          ess_tdofs.insert(ltdof);
-          if (on_signal)
-          {
-            signal_tdofs.insert(ltdof);
-          }
+          signal_dofs[ldof] = 1;
+        }
+        else
+        {
+          reference_dofs[ldof] = 1;
         }
       }
     }
@@ -585,6 +586,29 @@ struct LumpedPortData::TerminalSheetMode
     MFEM_VERIFY(global_counts[0] > 0 && global_counts[1] > 0,
                 "\"TerminalEdges\" did not map to both signal and reference vertices on "
                 "the port sheet!");
+
+    mfem::Array<int> signal_tdofs;
+    mfem::Array<int> reference_tdofs;
+    fespace.GetRestrictionMatrix()->BooleanMult(signal_dofs, signal_tdofs);
+    fespace.GetRestrictionMatrix()->BooleanMult(reference_dofs, reference_tdofs);
+
+    std::set<int> ess_tdofs;
+    std::set<int> signal_tdof_set;
+    for (int tdof = 0; tdof < signal_tdofs.Size(); tdof++)
+    {
+      if (signal_tdofs[tdof])
+      {
+        MFEM_VERIFY(!reference_tdofs[tdof],
+                    "\"TerminalEdges\" signal and reference constraints overlap on a "
+                    "true DOF!");
+        ess_tdofs.insert(tdof);
+        signal_tdof_set.insert(tdof);
+      }
+      if (reference_tdofs[tdof])
+      {
+        ess_tdofs.insert(tdof);
+      }
+    }
 
     mfem::Array<int> ess_tdof_list;
     ess_tdof_list.Reserve(static_cast<int>(ess_tdofs.size()));
@@ -603,7 +627,7 @@ struct LumpedPortData::TerminalSheetMode
     true_potential = 0.0;
     {
       double *values = true_potential.HostReadWrite();
-      for (int tdof : signal_tdofs)
+      for (int tdof : signal_tdof_set)
       {
         values[tdof] = 1.0;
       }
