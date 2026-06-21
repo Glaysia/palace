@@ -30,7 +30,9 @@ endif()
 
 # Silence some CUDA/HIP include file warnings
 if(PALACE_WITH_CUDA)
-  set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${CUDAToolkit_INCLUDE_DIRS}")
+  foreach(CUDA_INCLUDE_DIR IN LISTS CUDAToolkit_INCLUDE_DIRS)
+    set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${CUDA_INCLUDE_DIR}")
+  endforeach()
 endif()
 if(PALACE_WITH_HIP)
   set(LIBCEED_OPT_FLAGS "${LIBCEED_OPT_FLAGS} -isystem ${ROCM_DIR}/include")
