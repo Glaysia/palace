@@ -144,12 +144,18 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   B.UseDevice(true);
   E = 0.0;
   B = 0.0;
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] field vectors initialized\n");
+  std::fflush(stdout);
 
   // Initialize structures for storing and reducing the results of error estimation.
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] constructing flux error estimator\n");
+  std::fflush(stdout);
   TimeDependentFluxErrorEstimator<ComplexVector> estimator(
       space_op.GetMaterialOp(), space_op.GetNDSpaces(), space_op.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] flux error estimator constructed\n");
+  std::fflush(stdout);
   ErrorIndicator indicator;
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -190,12 +196,28 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto omega = omega_sample[omega_i];
       // Assemble frequency dependent matrices and initialize operators in linear
       // solver.
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling extra system matrix\n");
+      std::fflush(stdout);
       auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] extra system matrix assembled\n");
+      std::fflush(stdout);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling full system matrix\n");
+      std::fflush(stdout);
       auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
                                         K.get(), C.get(), M.get(), A2.get());
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] full system matrix assembled\n");
+      std::fflush(stdout);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling preconditioner matrix\n");
+      std::fflush(stdout);
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] preconditioner matrix assembled\n");
+      std::fflush(stdout);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] setting KSP operators\n");
+      std::fflush(stdout);
       ksp.SetOperators(*A, *P);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] KSP operators set\n");
+      std::fflush(stdout);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
@@ -209,9 +231,17 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
               : "");
 
       // Solve linear system.
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling excitation vector\n");
+      std::fflush(stdout);
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] excitation vector assembled\n");
+      std::fflush(stdout);
       Mpi::Print("\n");
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] entering KSP solve\n");
+      std::fflush(stdout);
       ksp.Mult(RHS, E);
+      Mpi::Print(space_op.GetComm(), "[sweep-trace] KSP solve returned\n");
+      std::fflush(stdout);
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
