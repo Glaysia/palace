@@ -251,6 +251,25 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
+    // A conforming refinement can increase the actual finite-element space size by much
+    // more than the number of marked elements suggests. Check the adapted ND space before
+    // launching the next solve so MaxSize can prevent an otherwise avoidable OOM.
+    if (refinement.max_size > 0)
+    {
+      mfem::ND_FECollection nd_fec(iodata.solver.order, mesh.back()->Dimension());
+      mfem::ParFiniteElementSpace nd_fespace(&mesh.back()->Get(), &nd_fec);
+      const auto adapted_ntdof = nd_fespace.GlobalTrueVSize();
+      Mpi::Print(" Adapted mesh global unknowns = {:d}\n", adapted_ntdof);
+      if (adapted_ntdof > refinement.max_size)
+      {
+        ntdof = adapted_ntdof;
+        Mpi::Warning("Adapted mesh global unknowns ({:d}) exceed AMR MaxSize ({:d}); "
+                     "skipping the next solve/estimate iteration.\n",
+                     adapted_ntdof, refinement.max_size);
+        break;
+      }
+    }
+
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
