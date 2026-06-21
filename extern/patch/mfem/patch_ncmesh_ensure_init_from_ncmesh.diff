@@ -1,0 +1,14 @@
+diff --git a/mesh/mesh.cpp b/mesh/mesh.cpp
+--- a/mesh/mesh.cpp
++++ b/mesh/mesh.cpp
+@@ -11262,7 +11262,9 @@ void Mesh::EnsureNCMesh(bool simplices_nonconforming)
+           (meshgen & 0x4) /* wedges */ ||
+           (simplices_nonconforming && (meshgen & 0x1)) /* simplices */)
+       {
+-         ncmesh = new NCMesh(this);
++         NCMesh *new_ncmesh = new NCMesh(this);
++         ncmesh = new_ncmesh;
++         InitFromNCMesh(*new_ncmesh);
+          ncmesh->OnMeshUpdated(this);
+          GenerateNCFaceInfo();
+       }

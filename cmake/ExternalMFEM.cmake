@@ -399,6 +399,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_refcount_width.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_ncmesh_ensure_init_from_ncmesh.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5280.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
 )
