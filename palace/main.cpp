@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <filesystem>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,6 +33,12 @@
 #endif
 
 using namespace palace;
+
+static void PrintPostMeshTrace(MPI_Comm comm, std::string_view msg)
+{
+  Mpi::Print(comm, "[postmesh-trace] {}\n", msg);
+  std::fflush(stdout);
+}
 
 static const char *GetPalaceGitTag()
 {
@@ -284,19 +291,28 @@ int main(int argc, char *argv[])
     mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
+    PrintPostMeshTrace(world_comm, "RefineMesh returned");
     Mpi::Print(world_comm, "\n");
+    PrintPostMeshTrace(world_comm, "collecting current per-rank memory stats");
     memory_reporting::PrintMemoryUsage(world_comm,
                                        memory_reporting::GetCurrentMemoryStats(world_comm));
+    PrintPostMeshTrace(world_comm, "collecting current per-node memory stats");
     memory_reporting::PrintMemoryUsage(
         world_comm, memory_reporting::GetCurrentNodeMemoryStats(world_comm));
+    PrintPostMeshTrace(world_comm, "constructing Palace Mesh wrappers");
     for (auto &m : mfem_mesh)
     {
+      PrintPostMeshTrace(world_comm, "constructing one Palace Mesh wrapper");
       mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+      PrintPostMeshTrace(world_comm, "constructed one Palace Mesh wrapper");
     }
+    PrintPostMeshTrace(world_comm, "all Palace Mesh wrappers constructed");
   }
 
   // Run the problem driver.
+  PrintPostMeshTrace(world_comm, "entering SolveEstimateMarkRefine");
   solver->SolveEstimateMarkRefine(mesh);
+  PrintPostMeshTrace(world_comm, "returned from SolveEstimateMarkRefine");
 
   // Print timing summary.
   auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
