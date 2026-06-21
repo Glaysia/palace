@@ -292,21 +292,35 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
 {
   const auto &fespace = fespaces.GetFinestFESpace();
+  Mpi::Print(fespace.GetComm(), "[metadata-trace] begin FE-space metadata reduction\n");
+  std::fflush(stdout);
   HYPRE_BigInt ne = fespace.GetParMesh().GetNE();
   Mpi::GlobalSum(1, &ne, fespace.GetComm());
   std::vector<HYPRE_BigInt> ndofs(fespaces.GetNumLevels());
   for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
   {
+    Mpi::Print(fespace.GetComm(), "[metadata-trace] begin FE-space level {} true size\n",
+               l);
+    std::fflush(stdout);
     ndofs[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+    Mpi::Print(fespace.GetComm(), "[metadata-trace] done FE-space level {} true size\n",
+               l);
+    std::fflush(stdout);
   }
   if (root)
   {
+    Mpi::Print(fespace.GetComm(), "[metadata-trace] begin FE-space metadata write\n");
+    std::fflush(stdout);
     json meta = LoadMetadata(post_dir);
     meta["Problem"]["MeshElements"] = ne;
     meta["Problem"]["DegreesOfFreedom"] = ndofs.back();
     meta["Problem"]["MultigridDegreesOfFreedom"] = ndofs;
     WriteMetadata(post_dir, meta);
+    Mpi::Print(fespace.GetComm(), "[metadata-trace] done FE-space metadata write\n");
+    std::fflush(stdout);
   }
+  Mpi::Print(fespace.GetComm(), "[metadata-trace] done FE-space metadata\n");
+  std::fflush(stdout);
 }
 
 template <typename SolverType>
@@ -370,9 +384,17 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
 {
   if (root)
   {
+    Mpi::Print("[metadata-trace] begin PortExcitations metadata load\n");
+    std::fflush(stdout);
     nlohmann::json meta = LoadMetadata(post_dir);
+    Mpi::Print("[metadata-trace] begin PortExcitations JSON conversion\n");
+    std::fflush(stdout);
     meta["Excitations"] = excitation_helper;
+    Mpi::Print("[metadata-trace] begin PortExcitations metadata write\n");
+    std::fflush(stdout);
     WriteMetadata(post_dir, meta);
+    Mpi::Print("[metadata-trace] done PortExcitations metadata\n");
+    std::fflush(stdout);
   }
 }
 

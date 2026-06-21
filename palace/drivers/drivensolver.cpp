@@ -48,6 +48,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print(mesh.back()->GetComm(), "[driven-trace] saving port excitation metadata\n");
   std::fflush(stdout);
   SaveMetadata(port_excitations);
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] port excitation metadata saved\n");
+  std::fflush(stdout);
 
   const auto &omega_sample = iodata.solver.driven.sample_f;
 
@@ -60,9 +62,14 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
   }
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] saving ND-space metadata\n");
+  std::fflush(stdout);
   SaveMetadata(space_op.GetNDSpaces());
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] ND-space metadata saved\n");
+  std::fflush(stdout);
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
              port_excitations.FmtLog());
+  std::fflush(stdout);
 
   std::size_t restart = iodata.solver.driven.restart;
   if (restart != 1)
@@ -77,6 +84,9 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Main frequency sweep loop.
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] entering {} sweep\n",
+             adaptive ? "adaptive" : "uniform");
+  std::fflush(stdout);
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};
 }
@@ -88,21 +98,43 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Initialize postprocessing for measurement and printers.
   // Initialize write directory with default path; will be changed for multi-excitations.
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] constructing PostOperator\n");
+  std::fflush(stdout);
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] PostOperator constructed\n");
+  std::fflush(stdout);
 
   // Construct the system matrices defining the linear operator. PEC boundaries are handled
   // simply by setting diagonal entries of the system matrix for the corresponding dofs.
   // Because the Dirichlet BC is always homogeneous, no special elimination is required on
   // the RHS. Assemble the linear system for the initial frequency (so we can call
   // KspSolver::SetOperators). Compute everything at the first frequency step.
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling stiffness matrix\n");
+  std::fflush(stdout);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] stiffness matrix assembled\n");
+  std::fflush(stdout);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling damping matrix\n");
+  std::fflush(stdout);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] damping matrix assembled\n");
+  std::fflush(stdout);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] assembling mass matrix\n");
+  std::fflush(stdout);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] mass matrix assembled\n");
+  std::fflush(stdout);
   const auto &Curl = space_op.GetCurlMatrix();
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] curl matrix ready\n");
+  std::fflush(stdout);
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] constructing ComplexKspSolver\n");
+  std::fflush(stdout);
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  Mpi::Print(space_op.GetComm(), "[sweep-trace] ComplexKspSolver constructed\n");
+  std::fflush(stdout);
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
