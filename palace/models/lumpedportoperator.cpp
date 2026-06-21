@@ -423,20 +423,14 @@ struct LumpedPortData::TerminalSheetMode
                     const MaterialOperator &mat_op)
   {
     attr_list.Append(attrs);
-    port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
-        mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list)));
+    CreatePortMesh(mesh, attr_list);
+    SelectAdjacentSide(mesh, mat_op);
+    CreateSelectedPortMesh(mesh);
+
     port_h1_fec = std::make_unique<mfem::H1_FECollection>(1, port_mesh->Dimension());
     port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
     potential = std::make_unique<mfem::ParGridFunction>(&port_h1_fespace->Get());
 
-    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-    const mfem::Array<int> &parent_elems = port_submesh.GetParentElementIDMap();
-    for (int i = 0; i < parent_elems.Size(); i++)
-    {
-      submesh_parent_elems[parent_elems[i]] = i;
-    }
-
-    SelectAdjacentSide(mesh, mat_op);
     SolvePotential(terminals);
     norm_sq = ComputeNormSq();
     const auto [phi_min, phi_max] = ComputePotentialRange();
@@ -451,6 +445,55 @@ struct LumpedPortData::TerminalSheetMode
                global_signal_vertices, global_reference_vertices, global_ess_tdofs, phi_min,
                phi_max, norm_sq);
     MFEM_VERIFY(norm_sq > 0.0, "Terminal sheet mode produced zero electric-field norm!");
+  }
+
+  void CreatePortMesh(const mfem::ParMesh &parent_mesh, const mfem::Array<int> &attrs)
+  {
+    port_mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParSubMesh>(
+        mfem::ParSubMesh::CreateFromBoundary(parent_mesh, attrs)));
+    submesh_parent_elems.clear();
+    selected_submesh_elems.clear();
+
+    const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+    const mfem::Array<int> &parent_elems = port_submesh.GetParentElementIDMap();
+    for (int i = 0; i < parent_elems.Size(); i++)
+    {
+      submesh_parent_elems[parent_elems[i]] = i;
+    }
+  }
+
+  void CreateSelectedPortMesh(const mfem::ParMesh &parent_mesh)
+  {
+    int bdr_attr_max = parent_mesh.bdr_attributes.Size() ? parent_mesh.bdr_attributes.Max() : 0;
+    Mpi::GlobalMax(1, &bdr_attr_max, parent_mesh.GetComm());
+    const int selected_bdr_attr = bdr_attr_max + 1;
+
+    auto &mutable_parent_mesh = const_cast<mfem::ParMesh &>(parent_mesh);
+    std::vector<std::pair<int, int>> old_attrs;
+    old_attrs.reserve(selected_parent_elems.size());
+    for (int parent_be : selected_parent_elems)
+    {
+      old_attrs.emplace_back(parent_be, mutable_parent_mesh.GetBdrAttribute(parent_be));
+      mutable_parent_mesh.SetBdrAttribute(parent_be, selected_bdr_attr);
+    }
+    mutable_parent_mesh.SetAttributes();
+
+    mfem::Array<int> selected_attr_list;
+    selected_attr_list.Append(selected_bdr_attr);
+    CreatePortMesh(parent_mesh, selected_attr_list);
+
+    for (const auto &[parent_be, old_attr] : old_attrs)
+    {
+      mutable_parent_mesh.SetBdrAttribute(parent_be, old_attr);
+    }
+    mutable_parent_mesh.SetAttributes();
+
+    for (const auto &[parent_be, submesh_elem] : submesh_parent_elems)
+    {
+      MFEM_VERIFY(selected_parent_elems.find(parent_be) != selected_parent_elems.end(),
+                  "Selected terminal sheet submesh contains an unselected parent element!");
+      selected_submesh_elems.insert(submesh_elem);
+    }
   }
 
   static double RelativePermittivityScalar(const MaterialOperator &mat_op, int attr)
