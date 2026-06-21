@@ -346,6 +346,25 @@ public:
   }
 };
 
+class TerminalSheetSelectionCoefficient : public mfem::Coefficient
+{
+private:
+  const std::unordered_set<int> &selected_submesh_elems;
+
+public:
+  TerminalSheetSelectionCoefficient(const std::unordered_set<int> &selected_submesh_elems)
+    : selected_submesh_elems(selected_submesh_elems)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T,
+              const mfem::IntegrationPoint &ip) override
+  {
+    return selected_submesh_elems.find(T.ElementNo) == selected_submesh_elems.end() ? 0.0
+                                                                                   : 1.0;
+  }
+};
+
 class TerminalModalDampingOperator : public Operator
 {
 private:
@@ -425,7 +444,6 @@ struct LumpedPortData::TerminalSheetMode
     attr_list.Append(attrs);
     CreatePortMesh(mesh, attr_list);
     SelectAdjacentSide(mesh, mat_op);
-    CreateSelectedPortMesh(mesh);
 
     port_h1_fec = std::make_unique<mfem::H1_FECollection>(1, port_mesh->Dimension());
     port_h1_fespace = std::make_unique<FiniteElementSpace>(*port_mesh, port_h1_fec.get());
@@ -459,40 +477,6 @@ struct LumpedPortData::TerminalSheetMode
     for (int i = 0; i < parent_elems.Size(); i++)
     {
       submesh_parent_elems[parent_elems[i]] = i;
-    }
-  }
-
-  void CreateSelectedPortMesh(const mfem::ParMesh &parent_mesh)
-  {
-    int bdr_attr_max = parent_mesh.bdr_attributes.Size() ? parent_mesh.bdr_attributes.Max() : 0;
-    Mpi::GlobalMax(1, &bdr_attr_max, parent_mesh.GetComm());
-    const int selected_bdr_attr = bdr_attr_max + 1;
-
-    auto &mutable_parent_mesh = const_cast<mfem::ParMesh &>(parent_mesh);
-    std::vector<std::pair<int, int>> old_attrs;
-    old_attrs.reserve(selected_parent_elems.size());
-    for (int parent_be : selected_parent_elems)
-    {
-      old_attrs.emplace_back(parent_be, mutable_parent_mesh.GetBdrAttribute(parent_be));
-      mutable_parent_mesh.SetBdrAttribute(parent_be, selected_bdr_attr);
-    }
-    mutable_parent_mesh.SetAttributes();
-
-    mfem::Array<int> selected_attr_list;
-    selected_attr_list.Append(selected_bdr_attr);
-    CreatePortMesh(parent_mesh, selected_attr_list);
-
-    for (const auto &[parent_be, old_attr] : old_attrs)
-    {
-      mutable_parent_mesh.SetBdrAttribute(parent_be, old_attr);
-    }
-    mutable_parent_mesh.SetAttributes();
-
-    for (const auto &[parent_be, submesh_elem] : submesh_parent_elems)
-    {
-      MFEM_VERIFY(selected_parent_elems.find(parent_be) != selected_parent_elems.end(),
-                  "Selected terminal sheet submesh contains an unselected parent element!");
-      selected_submesh_elems.insert(submesh_elem);
     }
   }
 
@@ -585,6 +569,26 @@ struct LumpedPortData::TerminalSheetMode
     *potential = 0.0;
 
     mfem::Array<int> dofs;
+    mfem::Array<int> vertices;
+    mfem::Array<int> active_dofs(fespace.GetVSize());
+    active_dofs = 0;
+    std::vector<char> selected_vertices(mesh.GetNV(), 0);
+    for (int i : selected_submesh_elems)
+    {
+      mesh.GetElementVertices(i, vertices);
+      for (int j = 0; j < vertices.Size(); j++)
+      {
+        selected_vertices[vertices[j]] = 1;
+      }
+      fespace.GetElementDofs(i, dofs);
+      for (int j = 0; j < dofs.Size(); j++)
+      {
+        double sign = 1.0;
+        const int ldof = mfem::FiniteElementSpace::DecodeDof(dofs[j], sign);
+        active_dofs[ldof] = 1;
+      }
+    }
+
     mfem::Array<int> signal_dofs(fespace.GetVSize());
     mfem::Array<int> reference_dofs(fespace.GetVSize());
     signal_dofs = 0;
@@ -592,6 +596,10 @@ struct LumpedPortData::TerminalSheetMode
     int local_signal_vertices = 0, local_reference_vertices = 0;
     for (int v = 0; v < mesh.GetNV(); v++)
     {
+      if (!selected_vertices[v])
+      {
+        continue;
+      }
       const auto point = GetVertexPoint(mesh, v);
       const bool on_signal = VertexOnTerminalEdge(point, terminals[0]);
       const bool on_reference = VertexOnTerminalEdge(point, terminals[1]);
@@ -632,10 +640,14 @@ struct LumpedPortData::TerminalSheetMode
 
     mfem::Array<int> signal_tdofs;
     mfem::Array<int> reference_tdofs;
-    fespace.GetRestrictionMatrix()->BooleanMult(signal_dofs, signal_tdofs);
-    fespace.GetRestrictionMatrix()->BooleanMult(reference_dofs, reference_tdofs);
+    mfem::Array<int> active_tdofs;
+    const auto *restriction = fespace.GetRestrictionMatrix();
+    restriction->BooleanMult(signal_dofs, signal_tdofs);
+    restriction->BooleanMult(reference_dofs, reference_tdofs);
+    restriction->BooleanMult(active_dofs, active_tdofs);
     const int *signal_tdofs_data = signal_tdofs.HostRead();
     const int *reference_tdofs_data = reference_tdofs.HostRead();
+    const int *active_tdofs_data = active_tdofs.HostRead();
 
     std::set<int> ess_tdofs;
     std::set<int> signal_tdof_set;
@@ -650,6 +662,10 @@ struct LumpedPortData::TerminalSheetMode
         signal_tdof_set.insert(tdof);
       }
       if (reference_tdofs_data[tdof])
+      {
+        ess_tdofs.insert(tdof);
+      }
+      if (!active_tdofs_data[tdof])
       {
         ess_tdofs.insert(tdof);
       }
@@ -679,9 +695,9 @@ struct LumpedPortData::TerminalSheetMode
     }
     potential->SetFromTrueDofs(true_potential);
 
-    mfem::ConstantCoefficient one(1.0);
+    TerminalSheetSelectionCoefficient selected_coeff(selected_submesh_elems);
     mfem::ParBilinearForm a(&fespace);
-    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(one));
+    a.AddDomainIntegrator(new mfem::DiffusionIntegrator(selected_coeff));
     a.Assemble();
     a.Finalize();
 
