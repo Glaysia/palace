@@ -569,17 +569,10 @@ struct LumpedPortData::TerminalSheetMode
     *potential = 0.0;
 
     mfem::Array<int> dofs;
-    mfem::Array<int> vertices;
     mfem::Array<int> active_dofs(fespace.GetVSize());
     active_dofs = 0;
-    std::vector<char> selected_vertices(mesh.GetNV(), 0);
     for (int i : selected_submesh_elems)
     {
-      mesh.GetElementVertices(i, vertices);
-      for (int j = 0; j < vertices.Size(); j++)
-      {
-        selected_vertices[vertices[j]] = 1;
-      }
       fespace.GetElementDofs(i, dofs);
       for (int j = 0; j < dofs.Size(); j++)
       {
@@ -596,10 +589,6 @@ struct LumpedPortData::TerminalSheetMode
     int local_signal_vertices = 0, local_reference_vertices = 0;
     for (int v = 0; v < mesh.GetNV(); v++)
     {
-      if (!selected_vertices[v])
-      {
-        continue;
-      }
       const auto point = GetVertexPoint(mesh, v);
       const bool on_signal = VertexOnTerminalEdge(point, terminals[0]);
       const bool on_reference = VertexOnTerminalEdge(point, terminals[1]);
