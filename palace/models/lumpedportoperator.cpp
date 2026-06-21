@@ -1569,6 +1569,10 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     }
     MFEM_VERIFY(std::abs(data.R) > 0.0,
                 "Unexpected zero resistance in excited lumped port!");
+    if (data.HasTerminalEdges())
+    {
+      continue;
+    }
     for (std::size_t elem_idx = 0; elem_idx < data.elems.size(); elem_idx++)
     {
       const auto &elem = *data.elems[elem_idx];
@@ -1586,7 +1590,13 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
 
 bool LumpedPortOperator::HasTerminalEdgeExcitation(int excitation_idx) const
 {
-  (void)excitation_idx;
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.active && data.excitation == excitation_idx && data.HasTerminalEdges())
+    {
+      return true;
+    }
+  }
   return false;
 }
 
