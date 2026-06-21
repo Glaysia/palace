@@ -4,6 +4,7 @@
 #include "drivensolver.hpp"
 
 #include <complex>
+#include <cstdio>
 #include <cstddef>
 #include <iostream>
 #include <Eigen/Dense>
@@ -38,8 +39,14 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] constructing SpaceOperator\n");
+  std::fflush(stdout);
   SpaceOperator space_op(iodata, mesh);
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] SpaceOperator constructed\n");
+  std::fflush(stdout);
   const auto &port_excitations = space_op.GetPortExcitations();
+  Mpi::Print(mesh.back()->GetComm(), "[driven-trace] saving port excitation metadata\n");
+  std::fflush(stdout);
   SaveMetadata(port_excitations);
 
   const auto &omega_sample = iodata.solver.driven.sample_f;

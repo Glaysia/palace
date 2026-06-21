@@ -4,6 +4,7 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <cstdio>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -161,7 +162,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   MPI_Comm comm = mesh.back()->GetComm();
 
   // Perform initial solve and estimation.
+  Mpi::Print(comm, "[solver-trace] calling initial Solve()\n");
+  std::fflush(stdout);
   auto [indicators, ntdof] = Solve(mesh);
+  Mpi::Print(comm, "[solver-trace] initial Solve() returned\n");
+  std::fflush(stdout);
   double err = indicators.Norml2(comm);
 
   // Collection of all tests that might exhaust resources.

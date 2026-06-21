@@ -4,16 +4,45 @@
 #ifndef PALACE_FEM_MULTIGRID_HPP
 #define PALACE_FEM_MULTIGRID_HPP
 
+#include <cstdio>
 #include <memory>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace::fem
 {
+
+namespace internal
+{
+
+template <typename FECollection>
+constexpr const char *FiniteElementSpaceName()
+{
+  if constexpr (std::is_base_of<mfem::ND_FECollection, FECollection>::value)
+  {
+    return "ND";
+  }
+  else if constexpr (std::is_base_of<mfem::H1_FECollection, FECollection>::value)
+  {
+    return "H1";
+  }
+  else if constexpr (std::is_base_of<mfem::RT_FECollection, FECollection>::value)
+  {
+    return "RT";
+  }
+  else
+  {
+    return "unknown";
+  }
+}
+
+}  // namespace internal
 
 //
 // Methods for constructing hierarchies of finite element spaces for geometric multigrid.
@@ -86,8 +115,20 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
               "Empty mesh or FE collection for FE space construction!");
   int coarse_mesh_l = std::max(0, static_cast<int>(mesh.size() + fecs.size()) - 1 -
                                       std::max(1, mg_max_levels));
+  const auto comm = mesh.back()->GetComm();
+  const auto *space_name = internal::FiniteElementSpaceName<FECollection>();
+  Mpi::Print(comm,
+             "[fespace-trace] begin {} hierarchy (meshes={}, fecs={}, coarse_mesh_l={})\n",
+             space_name, mesh.size(), fecs.size(), coarse_mesh_l);
+  std::fflush(stdout);
+  Mpi::Print(comm, "[fespace-trace] begin {} coarse level mesh {}\n", space_name,
+             coarse_mesh_l);
+  std::fflush(stdout);
   FiniteElementSpaceHierarchy fespaces(
       std::make_unique<FiniteElementSpace>(*mesh[coarse_mesh_l], fecs[0].get()));
+  Mpi::Print(comm, "[fespace-trace] done {} coarse level mesh {}\n", space_name,
+             coarse_mesh_l);
+  std::fflush(stdout);
 
   mfem::Array<int> dbc_marker;
   if (dbc_attr && dbc_tdof_lists)
@@ -96,31 +137,57 @@ inline FiniteElementSpaceHierarchy ConstructFiniteElementSpaceHierarchy(
                            ? mesh[coarse_mesh_l]->Get().bdr_attributes.Max()
                            : 0;
     dbc_marker = mesh::AttrToMarker(bdr_attr_max, *dbc_attr);
+    Mpi::Print(comm, "[fespace-trace] begin {} coarse essential true dofs\n", space_name);
+    std::fflush(stdout);
     fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(dbc_marker,
                                                            dbc_tdof_lists->emplace_back());
+    Mpi::Print(comm, "[fespace-trace] done {} coarse essential true dofs\n", space_name);
+    std::fflush(stdout);
   }
 
   // h-refinement.
   for (std::size_t l = coarse_mesh_l + 1; l < mesh.size(); l++)
   {
+    Mpi::Print(comm, "[fespace-trace] begin {} h level mesh {}\n", space_name, l);
+    std::fflush(stdout);
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh[l], fecs[0].get()));
+    Mpi::Print(comm, "[fespace-trace] done {} h level mesh {}\n", space_name, l);
+    std::fflush(stdout);
     if (dbc_attr && dbc_tdof_lists)
     {
+      Mpi::Print(comm, "[fespace-trace] begin {} h level {} essential true dofs\n",
+                 space_name, l);
+      std::fflush(stdout);
       fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
           dbc_marker, dbc_tdof_lists->emplace_back());
+      Mpi::Print(comm, "[fespace-trace] done {} h level {} essential true dofs\n",
+                 space_name, l);
+      std::fflush(stdout);
     }
   }
 
   // p-refinement.
   for (std::size_t l = 1; l < fecs.size(); l++)
   {
+    Mpi::Print(comm, "[fespace-trace] begin {} p level {}\n", space_name, l);
+    std::fflush(stdout);
     fespaces.AddLevel(std::make_unique<FiniteElementSpace>(*mesh.back(), fecs[l].get()));
+    Mpi::Print(comm, "[fespace-trace] done {} p level {}\n", space_name, l);
+    std::fflush(stdout);
     if (dbc_attr && dbc_tdof_lists)
     {
+      Mpi::Print(comm, "[fespace-trace] begin {} p level {} essential true dofs\n",
+                 space_name, l);
+      std::fflush(stdout);
       fespaces.GetFinestFESpace().Get().GetEssentialTrueDofs(
           dbc_marker, dbc_tdof_lists->emplace_back());
+      Mpi::Print(comm, "[fespace-trace] done {} p level {} essential true dofs\n",
+                 space_name, l);
+      std::fflush(stdout);
     }
   }
+  Mpi::Print(comm, "[fespace-trace] done {} hierarchy\n", space_name);
+  std::fflush(stdout);
 
   return fespaces;
 }
