@@ -4,6 +4,7 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
@@ -1202,24 +1203,44 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     -> std::enable_if_t<U == ProblemType::DRIVEN, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] SetEGridFunction begin\n");
+  std::fflush(stdout);
   SetEGridFunction(e);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] SetEGridFunction done\n");
+  std::fflush(stdout);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] SetBGridFunction begin\n");
+  std::fflush(stdout);
   SetBGridFunction(b);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] SetBGridFunction done\n");
+  std::fflush(stdout);
 
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] MeasureAllImpl begin\n");
+  std::fflush(stdout);
   MeasureAllImpl();
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] MeasureAllImpl done\n");
+  std::fflush(stdout);
 
   std::complex<double> freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] PrintAllCSVData begin\n");
+  std::fflush(stdout);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
+  Mpi::Print(fem_op->GetComm(), "[postop-trace] PrintAllCSVData done\n");
+  std::fflush(stdout);
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::lower_bound(output_save_indices.begin(),
                                                   output_save_indices.end(), step));
+    Mpi::Print(fem_op->GetComm(), "[postop-trace] WriteParaviewFields begin\n");
+    std::fflush(stdout);
     WriteParaviewFields(omega.real(), ind);
+    Mpi::Print(fem_op->GetComm(), "[postop-trace] WriteParaviewFields done\n");
+    std::fflush(stdout);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
   if (ShouldWriteGridFunctionFields(step))
@@ -1228,7 +1249,11 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::lower_bound(output_save_indices.begin(),
                                                   output_save_indices.end(), step));
+    Mpi::Print(fem_op->GetComm(), "[postop-trace] WriteMFEMGridFunctions begin\n");
+    std::fflush(stdout);
     WriteMFEMGridFunctions(freq.real(), ind);
+    Mpi::Print(fem_op->GetComm(), "[postop-trace] WriteMFEMGridFunctions done\n");
+    std::fflush(stdout);
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
   return measurement_cache.domain_E_field_energy_all +
