@@ -93,6 +93,28 @@
               }
             }
           }
+        },
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Levels", "Attributes"],
+            "properties":
+            {
+              "Levels": { "type": "integer", "minimum": 0 },
+              "Attributes":
+              {
+                "type": "array",
+                "additionalItems": false,
+                "items": { "type": "integer", "minimum": 1 },
+                "minItems": 1
+              }
+            }
+          }
         }
       }
     }
