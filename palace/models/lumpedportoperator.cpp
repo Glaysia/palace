@@ -651,8 +651,14 @@ struct LumpedPortData::TerminalSheetMode
 
     std::set<int> ess_tdofs;
     std::set<int> signal_tdof_set;
+    int local_active_tdofs = 0;
+    int local_inactive_tdofs = 0;
+    int local_signal_tdofs = 0;
+    int local_reference_tdofs = 0;
     for (int tdof = 0; tdof < signal_tdofs.Size(); tdof++)
     {
+      local_active_tdofs += active_tdofs_data[tdof] ? 1 : 0;
+      local_inactive_tdofs += active_tdofs_data[tdof] ? 0 : 1;
       if (signal_tdofs_data[tdof])
       {
         MFEM_VERIFY(!reference_tdofs_data[tdof],
@@ -660,16 +666,28 @@ struct LumpedPortData::TerminalSheetMode
                     "true DOF!");
         ess_tdofs.insert(tdof);
         signal_tdof_set.insert(tdof);
+        local_signal_tdofs++;
       }
       if (reference_tdofs_data[tdof])
       {
         ess_tdofs.insert(tdof);
+        local_reference_tdofs++;
       }
       if (!active_tdofs_data[tdof])
       {
         ess_tdofs.insert(tdof);
       }
     }
+    int marker_counts[5] = {local_active_tdofs, local_inactive_tdofs,
+                            local_signal_tdofs, local_reference_tdofs,
+                            static_cast<int>(ess_tdofs.size())};
+    Mpi::GlobalSum(5, marker_counts, mesh.GetComm());
+    Mpi::Print("\nTerminal sheet active-DOF diagnostics:"
+               " active true DOFs = {:d}, inactive true DOFs = {:d}, "
+               "signal true DOFs = {:d}, reference true DOFs = {:d}, "
+               "essential true DOFs = {:d}\n",
+               marker_counts[0], marker_counts[1], marker_counts[2], marker_counts[3],
+               marker_counts[4]);
 
     mfem::Array<int> ess_tdof_list;
     ess_tdof_list.Reserve(static_cast<int>(ess_tdofs.size()));
