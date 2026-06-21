@@ -245,13 +245,24 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
-      Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
-                 linalg::Norml2(space_op.GetComm(), E),
-                 linalg::Norml2(space_op.GetComm(), RHS));
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] computing E norm\n");
+      std::fflush(stdout);
+      const auto e_norm = linalg::Norml2(space_op.GetComm(), E);
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] computing RHS norm\n");
+      std::fflush(stdout);
+      const auto rhs_norm = linalg::Norml2(space_op.GetComm(), RHS);
+      Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n", e_norm, rhs_norm);
+      std::fflush(stdout);
 
       // Compute B = -1/(iω) ∇ x E on the true dofs.
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] applying curl to E.real\n");
+      std::fflush(stdout);
       Curl.Mult(E.Real(), B.Real());
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] applying curl to E.imag\n");
+      std::fflush(stdout);
       Curl.Mult(E.Imag(), B.Imag());
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] scaling B field\n");
+      std::fflush(stdout);
       B *= -1.0 / (1i * omega);
       if (space_op.GetMaterialOp().HasWaveVector())
       {
@@ -260,12 +271,21 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         floquet_corr->AddMult(E, B, 1.0 / omega);
       }
 
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] measuring postprocessing outputs\n");
+      std::fflush(stdout);
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] postprocessing outputs measured\n");
+      std::fflush(stdout);
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
+      std::fflush(stdout);
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] adding error indicator\n");
+      std::fflush(stdout);
       estimator.AddErrorIndicator(E, B, total_domain_energy, indicator);
+      Mpi::Print(space_op.GetComm(), "[postpro-trace] error indicator added\n");
+      std::fflush(stdout);
     }
 
     // Final postprocessing & printing.
