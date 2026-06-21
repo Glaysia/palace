@@ -67,6 +67,14 @@ in the model and all computations will take place in the same units as the mesh.
             "Radius": <float>
         },
         ...
+    ],
+    "Attributes":
+    [
+        {
+            "Levels": <int>,
+            "Attributes": [<int array>]
+        },
+        ...
     ]
 }
 ```
@@ -101,6 +109,9 @@ region will be marked for refinement.
 
 `"Spheres"` :  Array of sphere region refinement objects. All elements with a node inside
 the sphere region will be marked for refinement.
+
+`"Attributes"` :  Array of domain attribute refinement objects. All elements whose domain
+attribute is in the specified list will be marked for refinement.
 
 `"Levels" [0]` : Levels of parallel mesh refinement inside the specified refinement region.
 

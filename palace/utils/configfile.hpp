@@ -106,6 +106,15 @@ struct SphereRefinementData
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
 };
 
+struct AttributeRefinementData
+{
+  // Refinement levels.
+  int ref_levels = 0;
+
+  // Domain attributes to refine.
+  std::vector<int> attributes = {};
+};
+
 struct RefinementData
 {
 public:
@@ -151,6 +160,7 @@ private:
   // Refinement data for mesh regions.
   std::vector<BoxRefinementData> box_list = {};
   std::vector<SphereRefinementData> sphere_list = {};
+  std::vector<AttributeRefinementData> attr_list = {};
 
 public:
   auto &GetBox(int i) { return box_list[i]; }
@@ -160,6 +170,10 @@ public:
   auto &GetSphere(int i) { return sphere_list[i]; }
   const auto &GetSpheres() const { return sphere_list; }
   auto &GetSpheres() { return sphere_list; }
+
+  auto &GetAttribute(int i) { return attr_list[i]; }
+  const auto &GetAttributes() const { return attr_list; }
+  auto &GetAttributes() { return attr_list; }
 
   RefinementData() = default;
   RefinementData(const json &refinement);

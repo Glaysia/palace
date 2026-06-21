@@ -426,6 +426,16 @@ RefinementData::RefinementData(const json &refinement)
       data.center = ctr->get<std::array<double, 3>>();  // Required
     }
   }
+  auto attributes = refinement.find("Attributes");
+  if (attributes != refinement.end())
+  {
+    for (auto it = attributes->begin(); it != attributes->end(); ++it)
+    {
+      AttributeRefinementData &data = attr_list.emplace_back();
+      data.ref_levels = it->at("Levels");  // Required
+      data.attributes = it->at("Attributes").get<std::vector<int>>();
+    }
+  }
 }
 
 ModelData::ModelData(const json &model)

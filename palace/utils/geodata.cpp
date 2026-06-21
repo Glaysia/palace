@@ -417,6 +417,13 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
       max_region_ref_levels = sphere.ref_levels;
     }
   }
+  for (const auto &attr : iodata.model.refinement.GetAttributes())
+  {
+    if (max_region_ref_levels < attr.ref_levels)
+    {
+      max_region_ref_levels = attr.ref_levels;
+    }
+  }
   if (iodata.solver.linear.mg_use_mesh && iodata.solver.linear.mg_max_levels > 1)
   {
     mesh.reserve(1 + uniform_ref_levels + max_region_ref_levels);
@@ -461,8 +468,8 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
 
   // Proceed with region-based refinement, level-by-level for all regions. Currently support
-  // box and sphere region shapes. Any overlap between regions is ignored (take the union,
-  // don't double-refine).
+  // box and sphere region shapes, and domain attribute sets. Any overlap between regions
+  // is ignored (take the union, don't double-refine).
   MFEM_VERIFY(
       max_region_ref_levels == 0 ||
           !(element_types.has_hexahedra || element_types.has_prisms ||
@@ -481,6 +488,22 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
     for (int i = 0; i < mesh.back()->GetNE(); i++)
     {
       bool refine = false;
+      const int elem_attr = mesh.back()->GetAttribute(i);
+      for (const auto &attr : iodata.model.refinement.GetAttributes())
+      {
+        if (region_ref_level < attr.ref_levels &&
+            std::find(attr.attributes.begin(), attr.attributes.end(), elem_attr) !=
+                attr.attributes.end())
+        {
+          refine = true;
+          break;
+        }
+      }
+      if (refine)
+      {
+        refinements.Append(mfem::Refinement(i));
+        continue;
+      }
       mfem::DenseMatrix pointmat;
       if (use_nodes)
       {
